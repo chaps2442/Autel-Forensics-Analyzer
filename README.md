@@ -26,3 +26,5 @@ L'outil prend en charge une source de données flexible et génère un ensemble 
 Source : Un dossier contenant les fichiers, ou une archive .zip / .7z.
 
 Rapports : Il produit une série de fichiers CSV faciles à analyser, un rapport de synthèse (rapport_analyse.txt), ainsi qu'une fiche explicative (LISEZMOI.txt)
+
+<img width="562" height="532" alt="image" src="https://github.com/user-attachments/assets/d17a6e00-6081-43a7-9e3c-e1bd94bd300d" />
