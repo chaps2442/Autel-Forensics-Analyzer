@@ -4,7 +4,7 @@ Autel Forensics Analyzer PRO (AFAP)
 
 Version: 1.0 Beta
 Auteur: Vincent Chapeau
-Contact : vincent.chapeau
+Contact : vincent.chapeau@teeltechcanada.com
 Date: 31 juillet 2025
 
 Description:
