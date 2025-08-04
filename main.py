@@ -1,19 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Autel Forensics Analyzer PRO (AFAP)
-
-Version: 1.0 Beta
-Auteur: Vincent Chapeau
-Contact : vincent.chapeau@teeltechcanada.com
-Date: 31 juillet 2025
-
-Description:
-Outil d'analyse forensique pour les tablettes Autel. (MaxiIM KM100 : OK)
-Extrait les VINs, les logs d'activité, les adresses MAC, etc., depuis
-un dossier ou une archive (.zip, .7z). 
-L'import depuis une extraction physique fera l'objet d'une mise à jour ainsi que le support d'autres modèles Autel.
-"""
-
 # main.py
 
 import tkinter as tk
@@ -163,8 +147,6 @@ class AutelApp(tk.Tk):
     # 2. FONCTIONS DE GESTION DE L'INTERFACE
     # ==================================================================
     def select_source(self):
-        """Permet de sélectionner un dossier OU un fichier archive."""
-        # CORRIGÉ : Guillemets doubles pour gérer l'apostrophe
         is_file = messagebox.askyesno(
             "Sélection de la source",
             "Voulez-vous sélectionner un fichier archive (.zip, .7z) ?\n\n"
@@ -212,7 +194,6 @@ class AutelApp(tk.Tk):
     def start_analysis(self):
         source_path = self.source_path.get()
         if not source_path or not self.dest_path.get():
-            # CORRIGÉ : Guillemets doubles pour gérer l'apostrophe
             messagebox.showerror("Erreur", "Veuillez sélectionner une source et un dossier d'export.")
             return
         
@@ -245,10 +226,15 @@ class AutelApp(tk.Tk):
                 self.progress.start()
                 
                 if src_path.lower().endswith('.zip'):
-                    self.progress_message.set("Décompression de l'archive .zip...")
+                    self.progress_message.set("Décompression .zip (avec préservation des dates)...")
                     temp_dir = tempfile.mkdtemp(prefix="afap_")
                     with zipfile.ZipFile(src_path, 'r') as zip_ref:
-                        zip_ref.extractall(temp_dir)
+                        for member in zip_ref.infolist():
+                            extracted_path = zip_ref.extract(member, temp_dir)
+                            if not member.is_dir():
+                                date_time = datetime.datetime(*member.date_time)
+                                timestamp = date_time.timestamp()
+                                os.utime(extracted_path, (timestamp, timestamp))
                     source_to_scan = temp_dir
                 elif src_path.lower().endswith('.7z'):
                     self.progress_message.set("Décompression de l'archive .7z...")
@@ -289,12 +275,9 @@ class AutelApp(tk.Tk):
 
             # --- Étape 5 : Définition et Exécution des Modules ---
             modules_to_run = [
-                ("Extraction des VINs", extract_all_vins),
-                ("Extraction des événements de logs", extract_all_log_events),
-                ("Extraction des adresses MAC", extract_mac),
-                ("Extraction des utilisateurs et URLs", extract_user_and_endpoints),
-                ("Extraction des mots de passe", extract_passwords),
-                ("Extraction des références véhicule", extract_vehicle_refs),
+                ("Extraction des VINs", extract_all_vins), ("Extraction des événements de logs", extract_all_log_events),
+                ("Extraction des adresses MAC", extract_mac), ("Extraction des utilisateurs et URLs", extract_user_and_endpoints),
+                ("Extraction des mots de passe", extract_passwords), ("Extraction des références véhicule", extract_vehicle_refs),
                 ("Copie des médias DCIM", extract_dcim_media),
                 ("Export des tables SQLite", export_sqlite_tables) 
             ]
@@ -304,24 +287,20 @@ class AutelApp(tk.Tk):
 
             for i, (name, func) in enumerate(modules_to_run, 1):
                 module_weight = 80.0 / total_modules
-                
                 def module_progress_callback(current, total):
                     if total > 0:
                         module_progress = (current / total) * module_weight
                         self.progress_percentage.set(base_progress + module_progress)
                         self.progress_message.set(f"Module ({i}/{total_modules}): {name} ({current}/{total})")
-                
                 try:
                     args = {"src_dir": source_to_scan, "export_dir": export_dir, "skip_md5": skip_md5, "progress_callback": module_progress_callback}
                     if name == "Export des tables SQLite":
                         args["tables"] = ['tb_history_menu', 'tb_user_info', 'tb_vci_record']
-                    
                     result = func(**args)
                     results[name] = len(result) if result is not None else 0
                 except Exception as e:
                     logging.exception(f"ERREUR CRITIQUE dans le module {name}")
                     results[name] = "Erreur"
-                
                 base_progress += module_weight
 
             # --- Étape 6 : Génération des Rapports ---
@@ -356,7 +335,6 @@ class AutelApp(tk.Tk):
             self.after(0, self._show_final_summary, summary)
 
         except Exception as e:
-            # CORRIGÉ : Guillemets doubles pour gérer les apostrophes
             logging.exception("Une erreur fatale est survenue durant l'analyse.")
             self.progress_message.set("Erreur Fatale !")
             messagebox.showerror("Erreur Fatale", f"L'analyse a échoué.\n\nErreur: {e}\n\nConsultez le log.")
