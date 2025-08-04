@@ -1,3 +1,19 @@
+# -*- coding: utf-8 -*-
+"""
+Autel Forensics Analyzer PRO (AFAP)
+
+Version: 1.1 Beta
+Auteur: Vincent Chapeau
+Contact : vincent.chapeau@teeltechcanada.com
+Date: 31 juillet 2025
+
+Description:
+Outil d'analyse forensique pour les tablettes Autel. (MaxiIM KM100 : OK)
+Extrait les VINs, les logs d'activité, les adresses MAC, etc., depuis
+un dossier ou une archive (.zip, .7z). 
+L'import depuis une extraction physique fera l'objet d'une mise à jour ainsi que le support d'autres modèles Autel.
+"""
+
 # main.py
 
 import tkinter as tk
@@ -141,7 +157,7 @@ class AutelApp(tk.Tk):
         self.btn_start = ttk.Button(self, text='Analyser', width=18, command=self.start_analysis)
         self.btn_start.pack(pady=10)
         
-        tk.Label(self, text="AFAP v1.0 Beta | Créé par Vincent Chapeau - 2025.07.31", font=("Arial", 9), fg="black").place(relx=1.0, rely=1.0, anchor='se')
+        tk.Label(self, text="AFAP v1.1 Beta | Créé par Vincent Chapeau - 2025.08.04", font=("Arial", 9), fg="black").place(relx=1.0, rely=1.0, anchor='se')
 
     # ==================================================================
     # 2. FONCTIONS DE GESTION DE L'INTERFACE
@@ -355,3 +371,4 @@ class AutelApp(tk.Tk):
 if __name__ == '__main__':
     app = AutelApp()
     app.mainloop()
+
