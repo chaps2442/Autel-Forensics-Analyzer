@@ -5,7 +5,7 @@ Autel Forensics Analyzer PRO (AFAP)
 Version: 1.1 Beta
 Auteur: Vincent Chapeau
 Contact : vincent.chapeau@teeltechcanada.com
-Date: 31 juillet 2025
+Date: 04 aout 2025
 
 Description:
 Outil d'analyse forensique pour les tablettes Autel. (MaxiIM KM100 : OK)
@@ -371,4 +371,5 @@ class AutelApp(tk.Tk):
 if __name__ == '__main__':
     app = AutelApp()
     app.mainloop()
+
 
