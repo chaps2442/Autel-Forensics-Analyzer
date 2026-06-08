@@ -1,30 +1,146 @@
-# Autel-Forensics-Analyzer
-Outil d'analyse forensique pour extractions de tablettes Autel.
+# Autel Forensics Analyzer PRO (AFAP) v2.1.0
 
-Fonctionnalités Principales
-L'outil est conçu pour analyser une extraction de tablette Autel, qu'elle soit sous forme de dossier, d'archive .zip ou .7z. Il automatise la recherche et l'extraction d'une grande variété d'artefacts forensiques pour reconstituer l'activité de l'utilisateur.
+> **Auteur :** Vincent Chapeau — Teel Technologies Canada
+> **Contact :** vincent.chapeau@teeltechcanada.com
+> **Licence :** MIT
 
-Données de Connectivité et d'Environnement
-Adresses MAC : Le script identifie toutes les adresses MAC uniques (Wi-Fi et Bluetooth) vues par la tablette. Pour chacune, il détermine le constructeur, indique si elle est probablement aléatoire, et génère un rapport séparé pour les dates et heures de connexion et déconnexion.
+Outil d'analyse forensique pour extractions de tablettes Autel
+(MaxiIM **KM100**, **KM100X**, et modèles à venir).
 
-Appareils Bluetooth : Il liste les noms de tous les appareils Bluetooth détectés à proximité (téléphones, TV, autres véhicules, etc.).
+L'outil prend en entrée :
+- un **dossier** d'extraction logique/physique,
+- une **archive `.zip` / `.7z`** (lue directement en VFS — pas de
+  décompression complète requise).
 
-Réseaux Wi-Fi : Il extrait les noms (SSID) des réseaux Wi-Fi qui ont été vus par la tablette.
+Il produit un dossier `Analyse_<SN>_<timestamp>/` contenant les CSV
+détaillés, un rapport **markdown consolidé** `rapport_forensique.md`
+et une **chronologie graphique** `Timeline_Chronologique.html`.
 
-Données d'Activité et Véhicules
-Numéros de Châssis (VIN) : L'outil scanne tous les fichiers, y compris les fichiers binaires (.bin) et les logs, pour trouver tous les VINs potentiels. Chaque VIN est validé pour s'assurer qu'il provient d'un constructeur connu.
+---
 
-Historique des Véhicules : Il se connecte à la base de données interne de la tablette (masdas.db) pour extraire l'historique des diagnostics : quel véhicule (marque, modèle), quelle fonction a été utilisée, et à quel moment.
+## Modules v2.0 → v2.1
 
-Actions Utilisateur : Il analyse en profondeur les logs pour extraire une chronologie détaillée des actions de l'utilisateur, comme les fonctions de programmation de clés utilisées, les résultats ("succès", "échec"), ou les erreurs rencontrées.
+| Module | Source(s) | CSV produit(s) |
+|---|---|---|
+| `extract_cloud_e_data`     | `Scan/CloudEData/*.json`            | `cloud_e_data.csv` |
+| `extract_module_usage`     | `Scan/Update/.FREQUENCY` × `copyData/CopyInfos.db` × `.AllUpdateList` | `modules_usage.csv` |
+| `extract_vci_logs`         | `Scan/Data/.VciLog/*.log`           | `vci_logs_index.csv`, `vci_logs_events.csv` |
+| `extract_es_history`       | `com.estrongs.android.pop/cache/visit_history` + `appinfo.db` | `es_visit_history.csv`, `es_installed_apps.csv` |
+| `extract_external_storage` | UUID FAT/exFAT croisés sur multi-sources | `external_storage_seen.csv` |
+| `extract_secrets`          | `Scan/Data/pem/`, `ImCertificate/`, `.licence.ini`, `tmp/rdp_client.ini`, JPush, `.auth_all_car`, `data/.push_deviceid` | `secrets_found.csv` + copies dans `secrets/` |
+| `extract_event_log`        | `Scan/EventLog/<epoch_ms>` (hex)    | `event_log_timeline.csv` + dump hex/bin dans `event_log/` |
+| `extract_wal_indicators`   | `*.db-wal`, `*.db-shm`, `*.db-journal` | `wal_indicators.csv` |
+| `create_forensic_report`   | (lit les CSV produits)              | `rapport_forensique.md` |
 
-Comptes et Mots de Passe : Le script recherche et extrait les comptes utilisateurs Autel ainsi que les paires de numéro de série/mot de passe trouvées en clair dans les logs.
+Le module `utils.get_tablet_info()` a été étendu : il prend en charge
+les extractions « sdcard-only » (sans `build.prop`) en faisant un fallback
+sur les JSON `Scan/CloudEData/*.json` puis sur les entêtes des VciLogs.
 
-Formats de Source et Rapports
-L'outil prend en charge une source de données flexible et génère un ensemble de rapports clairs :
+---
 
-Source : Un dossier contenant les fichiers, ou une archive .zip / .7z.
+## Modules historiques préservés (v1.x → v8.x)
 
-Rapports : Il produit une série de fichiers CSV faciles à analyser, un rapport de synthèse (rapport_analyse.txt), ainsi qu'une fiche explicative (LISEZMOI.txt)
+- `extract_all_vins` — VINs binaires + textes, validation WMI + check-digit ISO 3779
+- `extract_all_log_events` — événements applicatifs (15 patterns regex)
+- `extract_mac` — MAC + OUI vendor + flag locally-administered, connexions horodatées
+- `extract_user_and_endpoints` — `userId` + URLs dans les logs
+- `extract_passwords` — paires SN/password (texte ou JSON `queryAppInfo`)
+- `extract_vehicle_refs` — `mainItem`, références OEM / FCCID
+- `extract_dcim_media` — copie DCIM
+- `export_sqlite_tables` — `tb_history_menu`, `tb_user_info`, `tb_vci_record` (et toute autre DB SQLite trouvée)
+- `create_timeline_report` — `Timeline_Chronologique.html`
 
-<img width="562" height="532" alt="image" src="https://github.com/user-attachments/assets/d17a6e00-6081-43a7-9e3c-e1bd94bd300d" />
+---
+
+## Récupération de transactions effacées (WAL)
+
+AFAP **détecte et signale** les fichiers WAL/SHM présents (voir
+`wal_indicators.csv` + section 9 du rapport), mais **n'effectue pas** le
+carving de transactions effacées (ce n'est pas le rôle d'AFAP — l'API
+SQLite standard fusionne automatiquement le WAL en lecture seule).
+
+Pour récupérer les enregistrements effacés depuis un WAL, utiliser un
+outil forensique spécialisé :
+
+- **Sanderson Forensics — Forensic Browser for SQLite** (commercial)
+- **FQLite** (open-source)
+- **Oxygen Forensic SQLite Viewer**
+
+Le rapport indique automatiquement quels WAL sont les candidats
+prioritaires (triés par taille).
+
+---
+
+## Skiplist par hash MD5
+
+`hash_skiplist.txt` (7 505 entrées) contient les empreintes de fichiers
+de référence connus, apportés par **trois tablettes témoins** (Brugge,
+Versailles, +1) — ces fichiers standards de l'OS / des libs Autel
+sont automatiquement écartés du scan VIN binaire pour éviter le bruit.
+
+La skiplist est appliquée **uniquement** aux fichiers réels du disque ;
+en lecture VFS sur archive `.zip`/`.7z`, elle est inopérante (limitation
+connue — un hash sur le flux décompressé serait coûteux).
+
+---
+
+## Dépendances
+
+- Python 3.8+
+- `py7zr` (recommandé) — pour lire les `.7z` sans décompression
+- `psutil` (optionnel) — affichage CPU/RAM dans la GUI
+
+```bash
+pip install py7zr psutil
+```
+
+---
+
+## Lancement
+
+```bash
+python main.py
+```
+
+Interface graphique → sélectionner la source (dossier / `.zip` / `.7z`)
+et le dossier d'export → bouton **Analyser**.
+
+Le bouton **« Ouvrir le rapport »** à la fin de l'analyse ouvre
+`rapport_forensique.md` (fallback Timeline HTML).
+
+---
+
+## Mode CLI (v2.1)
+
+Un entrypoint `cli.py` sans GUI Tkinter, utilisable en SSH / batch :
+
+```bash
+python cli.py --source ./KM100_B --out ./out [--lang en]
+                                              [--modules cloud,vci,wal]
+                                              [--skip vins,logs]
+                                              [--quiet]
+```
+
+Le dernier print de stdout est le chemin du dossier d'analyse créé
+(pour piping).
+
+---
+
+## Langue du rapport (v2.1)
+
+Le rapport markdown est bilingue :
+
+- **GUI** : sélecteur Français / English sous Export
+- **CLI** : `--lang fr` (défaut) ou `--lang en`
+
+Les valeurs brutes (FuncName Autel, chemins, etc.) restent en langue
+d'origine — seuls les titres de sections, libellés et phrases d'analyse
+sont traduits.
+
+---
+
+## Auteur
+
+Vincent Chapeau
+Teel Technologies Canada
+`vincent.chapeau@teeltechcanada.com`
