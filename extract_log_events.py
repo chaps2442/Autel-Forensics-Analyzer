@@ -1,78 +1,56 @@
 # extract_log_events.py
+# Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
+import re, csv, logging, datetime
+from core_scanner import iter_entries, iter_text_lines_entry, should_skip, open_csv
 
-import os
-import re
-import csv
-import json
-import zipfile
-import io
-import logging
+PATTERNS = {
+    # --- Patterns Autel App & Diag ---
+    "DEVICE_CREDENTIALS": re.compile(r'sn: (\w+)\s+pwd:(\w+)'),
+    "DEVICE_INFO": re.compile(r'device_serialno: (\w+).*?device_password: (\w+)'),
+    "BLUETOOTH_PASSKEY": re.compile(r'passkey:(\d+)'),
+    "VEHICLE_DIAG_ACTION": re.compile(r'UserActInfoUploadManager:.*?jsonStr = (\{.*?\})'),
+    "VEHICLE_SET": re.compile(r'SetVehicleMake:\s*(.*?)$'),
+    "VIN_HISTORY": re.compile(r'SetScanInput.*("vtHis":\[.*?\])'),
 
-def extract_all_log_events(src_dir, export_dir, skip_md5=None, progress_callback=None, **kwargs):
-    """
-    Extrait une grande variété d'événements pertinents des fichiers logs, 
-    y compris les JSON d'activité, les appareils Bluetooth, les SSID Wi-Fi, etc.
-    """
-    event_rows = []
+    # --- Patterns génériques Android (Logcat) ---
+    "SYSTEM_BOOT": re.compile(r'Entered the Android system server!'),
+    "SYSTEM_SLEEP": re.compile(r'PowerManagerService: Going to sleep \(uid (\d+)\)'),
+    "USER_UNLOCK": re.compile(r'ActivityManager: User (\d+) state changed from RUNNING_LOCKED to RUNNING_UNLOCKED'),
+    "WIFI_CONNECTION": re.compile(r'Switching to new default network:.*?SSID: \"([^\"]+)\"'),
+    "WIFI_SCANNED_SSID": re.compile(r'Skip scan ssid for single scan:\s*(.*)'),
+    "APP_START": re.compile(r'ActivityManager: START u0 \{.*?cmp=([^ /\}]+).*?\}'),
+    "BLUETOOTH_ADAPTER_INFO": re.compile(r'BluetoothManagerService: Stored Bluetoothaddress: (.*)'),
+    "BLUETOOTH_STORED_DEVICE": re.compile(r'Stored bluetooth Name=(.*?),Address=(.*?)'),
+    "BLUETOOTH_FOUND_DEVICE": re.compile(r'search_result_file_init: addr:(\[.*?\]) name:(\[.*?\])'),
+    "GENERIC_EXCEPTION": re.compile(r'(Exception:.*)')
+}
+
+def extract_all_log_events(src_dir, export_dir, skip_md5=None, **kwargs):
+    header = ['source_path','line_number','event_type','detail_1','detail_2','detail_3','detail_4','detail_5', 'date_modification']
+    f_csv, writer = open_csv(export_dir, 'log_events_found.csv', header)
+    rows = []
     
-    # --- NOUVEAU : Regex enrichies sur base de vos extractions manuelles ---
-    PATTERNS = {
-        # Activités utilisateur (avec JSON)
-        "USER_ACTIVITY_JSON": re.compile(r'jsonStr\s*-->\s*({.*?})$', re.IGNORECASE),
-        "KEYTOOL_USE_JSON": re.compile(r'"eventType":"IM_KEYTOOL_USE".*?({.*?})', re.IGNORECASE),
-        "VIN_HISTORY_JSON": re.compile(r'"vtHis":\[(.*?)\]'),
-        
-        # Informations système et réseau
-        "BLUETOOTH_STORED": re.compile(r'Stored bluetooth Name=(.*?),Address=(.*?)$'),
-        "BLUETOOTH_DEVICE_FOUND": re.compile(r'search_result_file_init: addr:\[(.*?)\] name:\[(.*?)\]'),
-        "WIFI_SSID_FOUND": re.compile(r'Skip scan ssid for single scan:\s*(.*)'),
-        
-        # Informations techniques
-        "SERIAL_PASSWORD_QUERY": re.compile(r'queryAppInfo encrypt strJson = (.*?)$'),
-        "SET_VEHICLE": re.compile(r'SetVehicleMake:\s*(.*?)$'),
-        "ENCRYPTION": re.compile(r'AesRsaEcrypt begin n=(.*?) inLen=(.*?)$'),
-        "EXCEPTION": re.compile(r'(Exception:.*)'),
-    }
-
-    files_to_scan = [os.path.join(root, fname) for root, _, fnames in os.walk(src_dir) for fname in fnames if fname.lower().endswith(('.log', '.txt', '.zip'))]
-    total_files = len(files_to_scan)
-    if progress_callback: progress_callback(0, total_files)
-
-    for i, full_path in enumerate(files_to_scan, 1):
-        if progress_callback: progress_callback(i, total_files)
-        rel_path = os.path.relpath(full_path, src_dir)
-        
-        def parse_lines(line_iterator, file_path_display):
-            for line_num, line in enumerate(line_iterator, 1):
-                for event_type, pattern in PATTERNS.items():
-                    for match in pattern.finditer(line):
-                        details = [d.strip() for d in match.groups()]
-                        event_rows.append([file_path_display, line_num, event_type] + details)
-        
-        if full_path.lower().endswith('.zip'):
+    try:
+        for entry in iter_entries(src_dir, include_ext=('.log','.txt')):
+            if entry.is_os and should_skip(entry.path, skip_md5): continue
+            
             try:
-                with zipfile.ZipFile(full_path, 'r') as zf:
-                    for zinfo in zf.infolist():
-                        if not zinfo.is_dir() and zinfo.filename.lower().endswith(('.log', '.txt')):
-                            with zf.open(zinfo, 'r') as f:
-                                text_stream = io.TextIOWrapper(f, encoding='utf-8', errors='ignore')
-                                parse_lines(text_stream, f"{rel_path} -> {zinfo.filename}")
-            except Exception as e:
-                logging.warning(f"Impossible de traiter le ZIP {rel_path}: {e}")
-        else:
+                mtime = datetime.datetime.fromtimestamp(entry.mtime).strftime('%Y-%m-%d %H:%M:%S') if entry.mtime else "Date Inconnue"
+            except Exception:
+                mtime = "Date Inconnue"
+
             try:
-                with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    parse_lines(f, rel_path)
+                for lineno, line in enumerate(iter_text_lines_entry(entry), 1):
+                    for etype, pat in PATTERNS.items():
+                        for m in pat.finditer(line):
+                            details = [d.strip() for d in m.groups()]
+                            details = (details + [''] * 5)[:5]
+                            row = [entry.rel_path, lineno, etype] + details + [mtime]
+                            writer.writerow(row)
+                            rows.append(row)
             except Exception as e:
-                logging.warning(f"Impossible de lire le fichier log {rel_path}: {e}")
-
-    # --- Écriture du fichier CSV ---
-    output_csv_path = os.path.join(export_dir, 'log_events_found.csv')
-    with open(output_csv_path, 'w', newline='', encoding='utf-8-sig') as f:
-        writer = csv.writer(f)
-        max_details = max(len(row) for row in event_rows) if event_rows else 3
-        header = ['chemin_fichier', 'numero_ligne', 'type_evenement'] + [f'detail_{i}' for i in range(1, max_details - 2)]
-        writer.writerow(header)
-        writer.writerows(event_rows)
-
-    return event_rows
+                logging.warning(f"Erreur lecture {entry.rel_path}: {e}")
+    finally:
+        if f_csv:
+            f_csv.close()
+    return rows

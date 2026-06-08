@@ -1,4 +1,5 @@
 # wmi_list.py (Version nettoyée et optimisée)
+# Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 
 # Cette liste contient tous les WMI uniques et valides (3 caractères).
 
