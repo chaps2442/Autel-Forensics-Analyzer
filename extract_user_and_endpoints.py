@@ -1,28 +1,41 @@
-# extract_user_and_endpoints.py
-import os, csv, re
+# extract_user_and_endpoints.py (version VFS)
+# Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
+import csv
+import re
+import logging
+import datetime
+from core_scanner import iter_entries, iter_text_lines_entry, should_skip, open_csv
 
-def extract_user_and_endpoints(src_dir, export_dir, skip_md5=None, progress_callback=None, **kwargs):
-    out_u = os.path.join(export_dir, 'userId_found.csv')
-    out_e = os.path.join(export_dir, 'endpoints_found.csv')
-    users_found, endpoints_found = [], []
-    files_to_scan = [os.path.join(root, fname) for root, _, fnames in os.walk(src_dir) for fname in fnames if fname.lower().endswith(('.log','.txt'))]
-    total_files = len(files_to_scan)
-    if progress_callback: progress_callback(0, total_files)
+UID_RE = re.compile(r'\buserId\s*[:=]\s*(\d+)\b', re.IGNORECASE)
+URL_RE = re.compile(r'https?://[^\s\'"]+', re.IGNORECASE)
 
-    with open(out_u, 'w', newline='', encoding='utf-8-sig') as fu, open(out_e, 'w', newline='', encoding='utf-8-sig') as fe:
-        wu, we = csv.writer(fu), csv.writer(fe)
-        wu.writerow(['userId','path']); we.writerow(['endpoint','path'])
-        uid_re = re.compile(r'userId[:=]\s*(\d+)')
-        url_re = re.compile(r'https?://[^\s\'"]+')
-        for i, full_path in enumerate(files_to_scan, 1):
-            if progress_callback: progress_callback(i, total_files)
-            rel_path = os.path.relpath(full_path, src_dir)
+def extract_user_and_endpoints(src_dir, export_dir, skip_md5=None, **kwargs):
+    fu, wu = open_csv(export_dir, 'userId_found.csv', ['source_path', 'userId', 'date_modification'])
+    fe, we = open_csv(export_dir, 'endpoints_found.csv', ['source_path', 'endpoint', 'date_modification'])
+    results = []
+
+    try:
+        for entry in iter_entries(src_dir, include_ext=('.log', '.txt')):
+            if entry.is_os and should_skip(entry.path, skip_md5):
+                continue
+            
             try:
-                with open(full_path, 'r', encoding='utf-8', errors='ignore') as rf:
-                    data = rf.read()
-                    for m in uid_re.finditer(data):
-                        users_found.append(m.group(1)); wu.writerow([m.group(1), rel_path])
-                    for m in url_re.finditer(data):
-                        endpoints_found.append(m.group(0)); we.writerow([m.group(0), rel_path])
-            except Exception: continue
-    return users_found + endpoints_found
+                mtime = datetime.datetime.fromtimestamp(entry.mtime).strftime('%Y-%m-%d %H:%M:%S') if entry.mtime else "Date Inconnue"
+            except Exception:
+                mtime = "Date Inconnue"
+
+            try:
+                for line in iter_text_lines_entry(entry):
+                    for m in UID_RE.finditer(line):
+                        wu.writerow([entry.rel_path, m.group(1), mtime])
+                        results.append(m.group(1))
+                    for m in URL_RE.finditer(line):
+                        we.writerow([entry.rel_path, m.group(0), mtime])
+                        results.append(m.group(0))
+            except Exception as e:
+                logging.warning(f"Erreur lecture {entry.rel_path}: {e}")
+    finally:
+        fu.close()
+        fe.close()
+        
+    return results

@@ -1,23 +1,25 @@
-# extract_dcim_media.py
-import os, shutil
+# extract_dcim_media.py (version VFS)
+# Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
+import os
+import logging
+from core_scanner import iter_entries
 
-def extract_dcim_media(src_dir, export_dir, skip_md5=None, progress_callback=None, **kwargs):
-    dcim_dir = os.path.join(src_dir, 'DCIM')
+def extract_dcim_media(src_dir, export_dir, **kwargs):
     media_found = []
-    if not os.path.isdir(dcim_dir):
-        if progress_callback: progress_callback(1, 1)
-        return media_found
+    MEDIA_EXT = ('.jpg','.jpeg','.png','.mp4','.mov')
     
-    all_media = [os.path.join(root, fname) for root, _, fnames in os.walk(dcim_dir) for fname in fnames if fname.lower().endswith(('.jpg', '.png', '.mp4', '.mov'))]
-    total_media = len(all_media)
-    if progress_callback: progress_callback(0, total_media)
-
-    for i, full_path in enumerate(all_media, 1):
-        if progress_callback: progress_callback(i, total_media)
-        rel_path = os.path.relpath(full_path, src_dir)
-        dst_path = os.path.join(export_dir, rel_path)
-        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-        shutil.copy2(full_path, dst_path)
-        media_found.append(rel_path)
-        
+    for entry in iter_entries(src_dir):
+        if '/dcim/' in entry.rel_path.lower() and entry.rel_path.lower().endswith(MEDIA_EXT):
+            try:
+                relative_path = entry.rel_path.lstrip('/')
+                dst_path = os.path.join(export_dir, relative_path)
+                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                
+                with entry.open_binary() as f_in, open(dst_path, 'wb') as f_out:
+                    f_out.write(f_in.read())
+                
+                media_found.append(relative_path)
+            except Exception as e:
+                logging.warning(f"Copie DCIM échouée pour {entry.rel_path}: {e}")
+                
     return media_found
