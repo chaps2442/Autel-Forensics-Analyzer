@@ -1,4 +1,4 @@
-# cli.py — AFAP v2.1.0 — Mode ligne de commande
+# cli.py — AFAP v2.3.0 — Mode ligne de commande
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Usage :
@@ -37,6 +37,16 @@ from extract_secrets import extract_secrets
 from extract_event_log import extract_event_log
 from extract_wal_indicators import extract_wal_indicators
 from create_forensic_report import create_forensic_report
+# --- v2.2 : identité compte, WiFi/tethering, QR KYC, table maître, décalage horloge ---
+from extract_account import extract_account
+from extract_wifi import extract_wifi
+from extract_kyc_qr import extract_kyc_qr
+from extract_bluetooth import extract_bluetooth
+from create_master_timeline import create_master_timeline
+from create_timeline_html import create_timeline_html
+from parse_uart_bootlog import parse_uart_bootlog, detect_tablet_time
+from finalize_export import finalize_export
+from clock_offset import ClockOffset
 
 try:
     from i18n import set_lang
@@ -62,19 +72,28 @@ MODULES = {
     'secrets':  ('Secrets',             extract_secrets, {}),
     'events':   ('EventLog',            extract_event_log, {}),
     'wal':      ('WAL indicators',      extract_wal_indicators, {}),
+    'account':  ('Account identity',    extract_account, {}),
+    'bootlog':  ('UART boot log',       parse_uart_bootlog, {}),
+    'wifi':     ('WiFi / tethering',    extract_wifi, {}),
+    'bt':       ('Bluetooth devices',   extract_bluetooth, {}),
+    'kyc':      ('KYC QR decode',       extract_kyc_qr, {}),
     'timeline': ('Timeline HTML',       create_timeline_report, {}),
     'report':   ('Forensic report',     create_forensic_report, {}),
+    'master':   ('Master timeline CSV', create_master_timeline, {}),
+    'htimeline':('Timeline HTML (offset)', create_timeline_html, {}),
+    'finalize': ('Rangement export',     finalize_export, {}),
 }
 
-# Ordre par défaut (rapports en dernier)
+# Ordre par défaut (rapports/consolidation en dernier ; 'master' tout à la fin
+# car il agrège les CSV produits par mac/account/wifi/kyc).
 DEFAULT_ORDER = ['vins', 'logs', 'mac', 'user', 'pwd', 'vehref', 'dcim', 'sqlite',
                  'cloud', 'usage', 'vci', 'es', 'storage', 'secrets', 'events',
-                 'wal', 'timeline', 'report']
+                 'wal', 'account', 'bootlog', 'wifi', 'bt', 'kyc', 'timeline', 'report', 'master', 'htimeline', 'finalize']
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="AFAP v2.1.0 — Autel Forensics Analyzer (CLI mode)",
+        description="AFAP v2.3.0 — Autel Forensics Analyzer (CLI mode)",
         epilog="Exemple : python cli.py --source ./KM100_B --out ./out --lang en")
     p.add_argument('--source', '-s', required=True,
                    help="Source : dossier d'extraction OU archive .zip/.7z")
@@ -87,8 +106,23 @@ def main(argv=None):
                    help=f"Modules à exécuter (csv), parmi : {', '.join(MODULES.keys())}. "
                         "Défaut : tous, dans l'ordre standard.")
     p.add_argument('--skip', help="Modules à SAUTER (csv)")
+    # --- Décalage horloge (RTC) : à relever au moment de l'extraction ---
+    p.add_argument('--tablet-time',
+                   help="Heure AFFICHÉE sur la tablette au moment de l'extraction "
+                        "(format 'YYYY-MM-DD HH:MM:SS').")
+    p.add_argument('--real-time',
+                   help="Heure RÉELLE de référence au même instant "
+                        "(format 'YYYY-MM-DD HH:MM:SS'). Avec --tablet-time, calcule "
+                        "le décalage et remplit la colonne date_corrigee.")
+    p.add_argument('--bootlog',
+                   help="Log console UART sauvegardé (.txt/.log) : extrait ID SoC, "
+                        "CID eMMC, versions, RTC, cycles batterie. La RTC au boot "
+                        "sert d'heure tablette pour le decalage si --real-time est donne.")
+    p.add_argument('--clock-offset-seconds', type=int,
+                   help="Décalage en secondes fourni directement "
+                        "(tablette - réel). Alternative à --tablet-time/--real-time.")
     p.add_argument('--quiet', '-q', action='store_true', help="Sortie minimale")
-    p.add_argument('--version', action='version', version='AFAP 2.1.0')
+    p.add_argument('--version', action='version', version='AFAP 2.3.0')
     args = p.parse_args(argv)
 
     set_lang(args.lang)
@@ -121,41 +155,58 @@ def main(argv=None):
     # Identification + dossier export
     info = get_tablet_info(args.source)
     serial = info.get('serial', 'inconnu')
+
     export_dir = os.path.join(args.out, f"Analyse_{serial}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
     os.makedirs(export_dir, exist_ok=True)
     setup_logging(export_dir)
     export_tablet_info_csv(export_dir, info)
 
+    # Décalage horloge : construit, persiste (clock_offset.json), applique par 'master'
+    _tablet_time = args.tablet_time
+    if not _tablet_time and args.clock_offset_seconds is None and args.bootlog:
+        _rtc = detect_tablet_time(args.bootlog)
+        if _rtc:
+            _tablet_time = _rtc
+            if not args.quiet:
+                print(f"             Horloge: heure tablette lue dans le bootlog (RTC) = {_rtc}")
+    clock = ClockOffset.from_args(tablet_time=_tablet_time, real_time=args.real_time,
+                                  offset_seconds=args.clock_offset_seconds)
+    clock.to_json(export_dir)
+    scelle = os.path.basename(os.path.abspath(args.source).rstrip('/\\'))
+
     if not args.quiet:
-        print(f"[AFAP 2.1.0] Source: {args.source}")
+        print(f"[AFAP 2.2.0] Source: {args.source}")
         print(f"             Tablette: {serial} ({info.get('product_model','?')})  Langue rapport: {args.lang}")
         print(f"             Export: {export_dir}")
-        print(f"             Modules: {len(order)} → {','.join(order)}")
+        print(f"             Horloge: {clock.human()}")
+        print(f"             Modules: {len(order)} -> {','.join(order)}")
         print()
 
-    # Exécution
     total = len(order)
     for i, key in enumerate(order, 1):
         display, fn, extra = MODULES[key]
         if not args.quiet:
             print(f"[{i:2d}/{total}] {display:<22}", end=' ', flush=True)
         try:
-            kwargs = dict(src_dir=args.source, export_dir=export_dir, skip_md5=skip_md5)
+            kwargs = dict(src_dir=args.source, export_dir=export_dir, skip_md5=skip_md5,
+                          clock=clock, serial=serial, scelle=scelle,
+                          bootlog=args.bootlog, real_time=args.real_time)
             kwargs.update(extra)
             r = fn(**kwargs)
             n = len(r) if r else 0
             if not args.quiet:
-                print(f"→ {n}")
+                print(f"-> {n}")
         except Exception as e:
-            logging.exception(f"Module {key} a échoué")
+            logging.exception(f"Module {key} a echoue")
             if not args.quiet:
                 print(f"ERR: {e}")
 
     if not args.quiet:
-        print(f"\nTerminé. Rapport : {os.path.join(export_dir, 'rapport_forensique.md')}")
-    print(export_dir)   # toujours imprimé pour piping
+        print(f"\nTermine. Rapport : {os.path.join(export_dir, 'rapport_forensique.md')}")
+    print(export_dir)
     return 0
 
 
 if __name__ == '__main__':
     sys.exit(main())
+

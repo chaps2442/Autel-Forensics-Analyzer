@@ -1,4 +1,4 @@
-# Autel Forensics Analyzer PRO (AFAP) v2.1.0
+# Autel Forensics Analyzer PRO (AFAP) v2.3.0
 
 > **Auteur :** Vincent Chapeau — Teel Technologies Canada
 > **Contact :** vincent.chapeau@teeltechcanada.com
@@ -144,3 +144,57 @@ sont traduits.
 Vincent Chapeau
 Teel Technologies Canada
 `vincent.chapeau@teeltechcanada.com`
+
+---
+
+## v2.2 — Décalage horloge & table maître (import Mercure)
+
+### Décalage de l'horloge (RTC) de la tablette
+Au moment de l'extraction, relever l'heure **affichée sur la tablette** et
+l'heure **réelle** de référence au même instant. AFAP calcule le décalage et
+remplit la colonne `date_corrigee` de la table maître.
+
+```bash
+python cli.py --source ./KM100 --out ./out \
+    --tablet-time "2026-07-01 12:03:00" --real-time "2026-07-01 12:00:00"
+# ou directement :
+python cli.py --source ./KM100 --out ./out --clock-offset-seconds 180
+```
+
+`date_corrigee = date_tablette - offset` (offset = tablette − réel). Le
+décalage est journalisé et enregistré dans `clock_offset.json`.
+
+### Nouveaux modules
+`account` (identité + datation compte via userId), `wifi` (tethering/scan),
+`kyc` (décodage QR des photos), `master` (table unique **Chronologie_MAITRE.csv**
+importable dans Mercure, avec `date_tablette` et `date_corrigee`).
+
+```bash
+# tout, avec décalage horloge :
+python cli.py --source ./KM100 --out ./out --tablet-time "..." --real-time "..."
+# uniquement la chaîne réseau + table maître :
+python cli.py --source ./KM100 --out ./out --modules mac,wifi,account,master
+```
+Le module `kyc` requiert `opencv-python-headless` et `zxing-cpp`
+(voir requirements.txt) ; sans eux, il se désactive proprement.
+
+### Modules v2.2 (récapitulatif)
+| clé | sortie | rôle |
+|---|---|---|
+| `account` | account_identity.csv | identité compte + datation via userId |
+| `wifi` | wifi_networks.csv | tethering connecté vs scan, SSID, MAC |
+| `bt` | bluetooth_devices.csv | appareils Bluetooth appairés (MAC fixe/random) |
+| `kyc` | kyc_qr.csv | décodage QR des photos (KYC Autel) |
+| `master` | Chronologie_MAITRE.csv | table unique importable (Mercure) + date_corrigee |
+| `htimeline` | Timeline_interactive.html | appli avec saisie du décalage horloge en direct |
+
+Test de fumée : `python test_v22.py` (18 assertions, extraction synthétique).
+
+### Log UART (identité matérielle) — v2.3
+Sauvegarde le log console série (bootrom+U-Boot+kernel) dans un .txt, puis :
+```
+python cli.py --source ./KM100 --out ./out --bootlog ./bootlog.txt --real-time "2026-07-02 09:00:00"
+```
+→ `device_bootlog.csv` (ID SoC, CID eMMC, versions, RTC, cycles batterie, état NV…).
+La RTC au boot sert d'heure tablette : le décalage est calculé automatiquement
+et appliqué à la colonne `date_corrigee` de la table maître.

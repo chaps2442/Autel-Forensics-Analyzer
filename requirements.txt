@@ -1,0 +1,5 @@
+# AFAP — dépendances
+py7zr                     # lecture des archives .7z en streaming (source .7z)
+# --- optionnel : module 'kyc' (décodage des QR des photos) ---
+opencv-python-headless    # lecture/traitement d'images
+zxing-cpp                 # décodage QR robuste (photos d'écran)

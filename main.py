@@ -68,6 +68,16 @@ from extract_secrets import extract_secrets
 from extract_event_log import extract_event_log
 from extract_wal_indicators import extract_wal_indicators
 from create_forensic_report import create_forensic_report
+# --- v2.2/2.3 ---
+from extract_account import extract_account
+from extract_wifi import extract_wifi
+from extract_bluetooth import extract_bluetooth
+from extract_kyc_qr import extract_kyc_qr
+from parse_uart_bootlog import parse_uart_bootlog, detect_tablet_time
+from create_master_timeline import create_master_timeline
+from create_timeline_html import create_timeline_html
+from clock_offset import ClockOffset
+from finalize_export import finalize_export
 from i18n import set_lang as _set_lang, get_lang as _get_lang
 
 # ==================================================================
@@ -132,6 +142,33 @@ class AutelApp(tk.Tk):
         ttk.Radiobutton(frm_lang, text='Français', variable=self.lang_var, value='fr').pack(side='left', padx=10)
         ttk.Radiobutton(frm_lang, text='English',  variable=self.lang_var, value='en').pack(side='left', padx=10)
 
+        # Log UART (optionnel) : identité matérielle + RTC
+        frm_bl = ttk.LabelFrame(self, text='Log console UART (optionnel) — identité matérielle + horloge')
+        frm_bl.pack(fill='x', padx=10, pady=5)
+        self.bootlog_path = tk.StringVar()
+        ttk.Entry(frm_bl, textvariable=self.bootlog_path).pack(side='left', fill='x', expand=True, padx=5, pady=2)
+        ttk.Button(frm_bl, text='Parcourir...', command=self.select_bootlog).pack(side='right', padx=(0, 5))
+
+        # Décalage horloge (optionnel)
+        frm_ck = ttk.LabelFrame(self, text="Décalage horloge (optionnel) — corrige date_corrigee")
+        frm_ck.pack(fill='x', padx=10, pady=5)
+        self.tablet_time = tk.StringVar()
+        self.real_time = tk.StringVar(value=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        self.offset_sec = tk.StringVar()
+        row1 = ttk.Frame(frm_ck); row1.pack(fill='x', padx=5, pady=2)
+        ttk.Label(row1, text='Heure tablette :', width=16).pack(side='left')
+        ttk.Entry(row1, textvariable=self.tablet_time, width=22).pack(side='left', padx=4)
+        ttk.Label(row1, text='(ou lue dans le log UART si vide)').pack(side='left')
+        row2 = ttk.Frame(frm_ck); row2.pack(fill='x', padx=5, pady=2)
+        ttk.Label(row2, text='Heure réelle (PC) :', width=16).pack(side='left')
+        ttk.Entry(row2, textvariable=self.real_time, width=22).pack(side='left', padx=4)
+        ttk.Button(row2, text='↻ heure PC', command=lambda: self.real_time.set(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).pack(side='left', padx=4)
+        ttk.Label(row2, text='(modifiable si PC pas à l\'heure)').pack(side='left')
+        row3 = ttk.Frame(frm_ck); row3.pack(fill='x', padx=5, pady=2)
+        ttk.Label(row3, text='… ou décalage (s) :', width=16).pack(side='left')
+        ttk.Entry(row3, textvariable=self.offset_sec, width=22).pack(side='left', padx=4)
+        ttk.Label(row3, text='(tablette − réel, en secondes)').pack(side='left')
+
         dep_frame = ttk.LabelFrame(self, text="Statut des Dépendances Optionnelles")
         dep_frame.pack(fill='x', padx=10, pady=5)
         ttk.Label(dep_frame, textvariable=self.dep_py7zr).pack(anchor='w', padx=5)
@@ -151,7 +188,7 @@ class AutelApp(tk.Tk):
         self.btn_report = ttk.Button(btns, text='📂 Ouvrir le rapport', width=18, command=self.open_report, state='disabled')
         self.btn_report.pack(side='left', padx=5)
         ttk.Button(btns, text='Quitter', width=12, command=self.quit).pack(side='left', padx=5)
-        tk.Label(self, text="AFAP v2.1.0 | Créé par Vincent Chapeau", font=("Arial", 9), fg="black").place(relx=1.0, rely=1.0, anchor='se')
+        tk.Label(self, text="AFAP v2.3.0 | Créé par Vincent Chapeau", font=("Arial", 9), fg="black").place(relx=1.0, rely=1.0, anchor='se')
 
     def _check_dependencies(self):
         if PY7ZR_AVAILABLE:
@@ -184,6 +221,11 @@ class AutelApp(tk.Tk):
         path = filedialog.askdirectory()
         if path: self.dest_path.set(path)
 
+    def select_bootlog(self):
+        path = filedialog.askopenfilename(title="Log console UART (.txt/.log)",
+                                          filetypes=[("Logs", "*.txt *.log"), ("Tous", "*.*")])
+        if path: self.bootlog_path.set(path)
+
     def _update_ui_loop(self, step=0):
         if self.analysis_is_running:
             elapsed = datetime.datetime.now() - self.start_time
@@ -209,7 +251,10 @@ class AutelApp(tk.Tk):
         if not self.last_export_dir or not os.path.isdir(self.last_export_dir):
             messagebox.showerror("Erreur", "Le chemin du rapport est introuvable."); return
         # On privilégie le rapport markdown consolidé ; fallback sur la timeline HTML
-        for candidate in ('rapport_forensique.md', 'Timeline_Chronologique.html'):
+        candidates = [os.path.join('01_SYNTHESE_ENQUETEUR', 'rapport_forensique.md'),
+                      os.path.join('01_SYNTHESE_ENQUETEUR', 'Timeline_interactive.html'),
+                      'rapport_forensique.md', 'Timeline_Chronologique.html']
+        for candidate in candidates:
             report_path = os.path.join(self.last_export_dir, candidate)
             if os.path.exists(report_path):
                 try:
@@ -253,6 +298,21 @@ class AutelApp(tk.Tk):
             skip_md5 = {line.strip().lower() for line in open(skiplist_file, 'r', encoding='utf-8') if line.strip()} if os.path.isfile(skiplist_file) else set()
             
             _set_lang(self.lang_var.get())  # bascule i18n FR/EN pour le rapport
+
+            # --- Décalage horloge : heure tablette (champ, sinon RTC du log UART) ---
+            bootlog = self.bootlog_path.get().strip() or None
+            tt = self.tablet_time.get().strip()
+            if not tt and bootlog:
+                tt = detect_tablet_time(bootlog)
+            rt = self.real_time.get().strip() or None
+            osec = None
+            if self.offset_sec.get().strip():
+                try: osec = int(self.offset_sec.get().strip())
+                except ValueError: osec = None
+            clock = ClockOffset.from_args(tablet_time=(tt or None), real_time=rt, offset_seconds=osec)
+            clock.to_json(export_dir)
+            scelle = os.path.basename(os.path.abspath(source_to_scan).rstrip('/\\'))
+
             modules_to_run = [
                 # --- Modules historiques (CSV core) ---
                 ("Extraction des VINs",                    extract_all_vins),
@@ -272,9 +332,18 @@ class AutelApp(tk.Tk):
                 ("Secrets / certificats / clés",           extract_secrets),
                 ("EventLog applicatif",                    extract_event_log),
                 ("WAL SQLite (indicateurs)",               extract_wal_indicators),
+                # --- Modules v2.2/2.3 ---
+                ("Identité compte (userId)",               extract_account),
+                ("Log UART (identité matérielle)",         parse_uart_bootlog),
+                ("WiFi / tethering",                       extract_wifi),
+                ("Bluetooth (appareils appairés)",         extract_bluetooth),
+                ("QR KYC (photos DCIM)",                   extract_kyc_qr),
                 # --- Rapports (lisent les CSV produits — toujours en dernier) ---
                 ("Création de la Timeline",                create_timeline_report),
                 ("Rapport forensique consolidé",           create_forensic_report),
+                ("Table maître (import Mercure)",          create_master_timeline),
+                ("Timeline interactive (décalage)",        create_timeline_html),
+                ("Rangement de l'export",                  finalize_export),
             ]
             results = {}; total_modules = len(modules_to_run); base_progress = 10.0
             for i, (name, func) in enumerate(modules_to_run, 1):
@@ -282,7 +351,9 @@ class AutelApp(tk.Tk):
                 self.progress_message.set(f"Module ({i}/{total_modules}): {name}...")
                 self.progress_percentage.set(base_progress)
                 try:
-                    args = {"src_dir": source_to_scan, "export_dir": export_dir, "skip_md5": skip_md5}
+                    args = {"src_dir": source_to_scan, "export_dir": export_dir, "skip_md5": skip_md5,
+                            "clock": clock, "serial": serial, "scelle": scelle,
+                            "bootlog": bootlog, "real_time": rt}
                     if name == "Export des tables SQLite":
                         args["tables"] = ['tb_history_menu', 'tb_user_info', 'tb_vci_record']
                     result = func(**args)

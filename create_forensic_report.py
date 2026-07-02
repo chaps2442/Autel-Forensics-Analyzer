@@ -336,6 +336,107 @@ def _section_methodology():
 """
 
 # ----------------------------------------------------------------------
+# --- v2.2 : sections compte / réseau / bluetooth / KYC ---
+def _fr():
+    try:
+        return get_lang() != 'en'
+    except Exception:
+        return True
+
+def _section_account(export_dir):
+    rows = _read(os.path.join(export_dir, 'account_identity.csv'))
+    if not rows:
+        return ""
+    out = ["## 11. " + ("Compte Autel & identité" if _fr() else "Autel account & identity") + "\n"]
+    out.append("| " + ("Élément" if _fr() else "Item") + " | " + ("Valeur" if _fr() else "Value") + " | Note |")
+    out.append("|---|---|---|")
+    for r in rows:
+        out.append(f"| {r.get('element','')} | `{r.get('valeur','')}` | {r.get('note','')} |")
+    out.append("")
+    out.append(("> Réserve : la date de création du compte est **déduite** du userId "
+                "(nanosecondes epoch) ; l'enregistrement appareil (regTime/revendeur) "
+                "est une propriété de l'appareil, distincte du compte."
+                if _fr() else
+                "> Caveat: account creation date is **deduced** from the userId "
+                "(epoch nanoseconds); device registration (regTime/dealer) is a device "
+                "property, distinct from the account."))
+    out.append("")
+    return '\n'.join(out)
+
+def _section_network(export_dir):
+    rows = _read(os.path.join(export_dir, 'wifi_networks.csv'))
+    if not rows:
+        return ""
+    conn = [r for r in rows if (r.get('statut','') or '').startswith('CONNECT')]
+    scan = [r for r in rows if 'SCAN' in (r.get('statut','') or '')]
+    out = ["## 12. " + ("Réseau & partage de connexion" if _fr() else "Network & tethering") + "\n"]
+    if conn:
+        out.append(("**Réseau(x) connecté(s) :**" if _fr() else "**Connected network(s):**"))
+        out.append("| " + ("Statut" if _fr() else "Status") + " | SSID | BSSID/MAC | "
+                   + ("Passerelle" if _fr() else "Gateway") + " | " + ("Indice" if _fr() else "Signal")
+                   + " | Date |")
+        out.append("|---|---|---|---|---|---|")
+        for r in conn:
+            out.append(f"| {r.get('statut','')} | `{r.get('ssid','')}` | `{r.get('bssid_ou_mac','')}` | "
+                       f"{r.get('passerelle','')} | {r.get('indice','')} | {r.get('date','')} |")
+        out.append("")
+    if scan:
+        out.append(("**Réseaux vus en scan (non connectés) :** " if _fr() else "**Scanned (not connected):** ")
+                   + ", ".join(f"`{r.get('bssid_ou_mac','')}`" for r in scan[:20]))
+        out.append("")
+        out.append(("> Une box vue au scan n'implique pas une connexion ; ses BSSID non "
+                    "randomisées sont géolocalisables (bases WiFi)."
+                    if _fr() else
+                    "> A scanned AP does not imply a connection; its non-randomized BSSIDs "
+                    "are geolocatable (WiFi databases)."))
+        out.append("")
+    return '\n'.join(out)
+
+def _section_bluetooth(export_dir):
+    rows = _read(os.path.join(export_dir, 'bluetooth_devices.csv'))
+    if not rows:
+        return ""
+    bonded = [r for r in rows if 'APPAIR' in (r.get('statut','') or '')]
+    out = ["## 13. Bluetooth\n"]
+    out.append("| MAC | " + ("Type" if _fr() else "Type") + " | " + ("Fabricant" if _fr() else "Vendor")
+               + " | " + ("Profil" if _fr() else "Profile") + " | " + ("Noms" if _fr() else "Names")
+               + " | " + ("Statut" if _fr() else "Status") + " | Date |")
+    out.append("|---|---|---|---|---|---|---|")
+    for r in rows:
+        out.append(f"| `{r.get('mac','')}` | {r.get('type_mac','')} | {r.get('fabricant_oui','')} | "
+                   f"{r.get('profil','')} | {r.get('noms_associes','')} | {r.get('statut','')} | {r.get('date','')} |")
+    out.append("")
+    if bonded:
+        out.append(("> Un appareil **appairé** possède une MAC en général **fixe** (non "
+                    "randomisée), donc exploitable. Le lien avec un téléphone/tethering "
+                    "n'est pas présumé sans élément complémentaire."
+                    if _fr() else
+                    "> A **bonded** device usually has a **fixed** (non-randomized) MAC, "
+                    "hence usable. A link to a phone/tethering is not assumed without "
+                    "further evidence."))
+        out.append("")
+    return '\n'.join(out)
+
+def _section_kyc(export_dir):
+    rows = _read(os.path.join(export_dir, 'kyc_qr.csv'))
+    if not rows:
+        return ""
+    out = ["## 14. " + ("Vérification d'identité (QR/KYC)" if _fr() else "Identity verification (QR/KYC)") + "\n"]
+    out.append("| Image | Type | autelId | " + ("Pseudo" if _fr() else "Nickname") + " | SN | JWT iat |")
+    out.append("|---|---|---|---|---|---|")
+    for r in rows:
+        out.append(f"| `{r.get('image','')}` | {r.get('type','')} | {r.get('autelId','')} | "
+                   f"{r.get('nickname','')} | {r.get('serialNo','')} | {r.get('jwt_iat_utc','')} |")
+    out.append("")
+    out.append(("> Piste : une vérification KYC implique la soumission d'une pièce "
+                "d'identité au serveur Autel (réquisition possible)."
+                if _fr() else
+                "> Lead: a KYC verification implies an ID document submitted to the Autel "
+                "server (legal request possible)."))
+    out.append("")
+    return '\n'.join(out)
+
+# ----------------------------------------------------------------------
 def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
     info = _tablet_info(export_dir)
     serial = info.get('Serial', 'inconnu')
@@ -346,7 +447,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
              f"**{T('report.model')} :** `{info.get('Product model', 'inconnu')}`  ",
              f"**{T('report.source')} :** `{src_dir}`  ",
              f"**{T('report.generated')} :** {now}  ",
-             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.1.0\n",
+             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.2.1\n",
              "---\n"]
 
     parts.append(_section_exec_summary(export_dir, info))
@@ -360,10 +461,14 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
     parts.append(_section_event_log(export_dir))
     parts.append(_section_wal_indicators(export_dir))
     parts.append(_section_standard_modules(export_dir))
+    parts.append(_section_account(export_dir))
+    parts.append(_section_network(export_dir))
+    parts.append(_section_bluetooth(export_dir))
+    parts.append(_section_kyc(export_dir))
     parts.append(_section_methodology())
 
     parts.append("\n---\n")
-    parts.append(f"*AFAP v2.1.0 — Vincent Chapeau, Teel Technologies Canada.*\n")
+    parts.append(f"*AFAP v2.2.1 — Vincent Chapeau, Teel Technologies Canada.*\n")
 
     out_path = os.path.join(export_dir, 'rapport_forensique.md')
     with open(out_path, 'w', encoding='utf-8') as f:

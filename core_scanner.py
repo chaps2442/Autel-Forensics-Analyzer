@@ -43,23 +43,34 @@ def iter_files(src_dir, include_ext=None, exclude_ext=None):
 
             yield full_path
 
+# Cache MD5 partagé entre modules : un fichier n'est haché qu'UNE fois par run,
+# ce qui évite de re-traiter/re-hacher les fichiers du skiplist à chaque module.
+_MD5_CACHE = {}
+
 def file_md5(path):
-    """Calcule le hash MD5 d'un fichier."""
+    """Calcule (et met en cache) le hash MD5 d'un fichier."""
     aware_path = _long_path_aware(path)
-    if not os.path.isfile(aware_path): return None
+    if aware_path in _MD5_CACHE:
+        return _MD5_CACHE[aware_path]
+    if not os.path.isfile(aware_path):
+        _MD5_CACHE[aware_path] = None
+        return None
     h = hashlib.md5()
     try:
         with open(aware_path, 'rb') as f:
             for chunk in iter(lambda: f.read(8192), b''):
                 h.update(chunk)
-        return h.hexdigest().lower()
-    except (IOError, OSError): return None
+        val = h.hexdigest().lower()
+    except (IOError, OSError):
+        val = None
+    _MD5_CACHE[aware_path] = val
+    return val
 
 def should_skip(path, skip_md5_set):
-    """Vérifie si un fichier doit être ignoré sur base de son MD5."""
+    """Vérifie si un fichier doit être ignoré sur base de son MD5 (skiplist)."""
     if not skip_md5_set: return False
     hash_val = file_md5(path)
-    return hash_val and hash_val in skip_md5_set
+    return bool(hash_val and hash_val in skip_md5_set)
 
 def open_csv(export_dir, filename, header):
     """Ouvre un fichier CSV pour l'écriture."""
@@ -90,17 +101,39 @@ class Entry:
             return open(_long_path_aware(self.path), 'r', encoding=encoding, errors=errors)
         return io.TextIOWrapper(self.v_open_bin(), encoding=encoding, errors=errors)
 
+# Cache du LISTING d'un dossier (chemin, rel, mtime) : l'arborescence n'est
+# parcourue (os.walk + stat) qu'UNE fois par run, quel que soit le nombre de
+# modules. Transparent : iter_entries filtre ensuite par extension en mémoire.
+# (Uniquement pour les sources DOSSIER ; les archives gardent le comportement
+# d'origine pour ne pas conserver de handles ouverts.)
+_DIR_LISTING_CACHE = {}
+
+def _dir_listing(src):
+    key = os.path.abspath(src)
+    cached = _DIR_LISTING_CACHE.get(key)
+    if cached is not None:
+        return cached
+    listing = []
+    for full_path in iter_files(src):  # sans filtre : on liste tout une fois
+        rel = relpath_safe(full_path, src)
+        try:
+            mtime = os.path.getmtime(_long_path_aware(full_path))
+        except Exception:
+            mtime = None
+        listing.append((full_path, rel, mtime))
+    _DIR_LISTING_CACHE[key] = listing
+    return listing
+
 def iter_entries(src: str, include_ext=None, exclude_ext=None) -> Iterator[Entry]:
     """Itérateur unifié qui lit les fichiers d'un dossier OU d'une archive."""
     include = {e.lower() for e in include_ext} if include_ext else None
     exclude = {e.lower() for e in exclude_ext} if exclude_ext else None
 
     if os.path.isdir(src):
-        for full_path in iter_files(src, include_ext=include_ext, exclude_ext=exclude_ext):
-            rel = relpath_safe(full_path, src)
-            try:
-                mtime = os.path.getmtime(_long_path_aware(full_path))
-            except Exception: mtime = None
+        for full_path, rel, mtime in _dir_listing(src):
+            ext = os.path.splitext(full_path)[1].lower()
+            if include and ext not in include: continue
+            if exclude and ext in exclude: continue
             yield Entry(rel_path=rel, mtime=mtime, is_os=True, path=full_path)
     else:
         # --- LA CORRECTION EST ICI ---
@@ -111,6 +144,30 @@ def iter_entries(src: str, include_ext=None, exclude_ext=None) -> Iterator[Entry
                 if include and ext not in include: continue
                 if exclude and ext in exclude: continue
                 yield Entry(rel_path=vf.vfs_path, mtime=vf.mtime, is_os=False, v_open_bin=vf.open_binary)
+
+# Cache TEXTE plafonné : chaque fichier .log/.txt n'est lu qu'une fois ;
+# les modules suivants (account/wifi/bt/master) réutilisent le contenu.
+# Plafond mémoire pour rester sûr sur de grosses extractions (au-delà, on
+# relit sans mettre en cache).
+_TEXT_CACHE = {}
+_TEXT_CACHE_BYTES = [0]
+_TEXT_CACHE_CAP = 800 * 1024 * 1024  # 800 Mo
+
+def read_text_cached(entry):
+    """Retourne le texte intégral d'un Entry, mis en cache (dans la limite)."""
+    key = entry.path if entry.is_os else ('vfs:' + entry.rel_path)
+    if key in _TEXT_CACHE:
+        return _TEXT_CACHE[key]
+    try:
+        with entry.open_text() as f:
+            txt = f.read()
+    except Exception as e:
+        logging.debug(f"read_text_cached {entry.rel_path}: {e}")
+        txt = ""
+    if _TEXT_CACHE_BYTES[0] + len(txt) <= _TEXT_CACHE_CAP:
+        _TEXT_CACHE[key] = txt
+        _TEXT_CACHE_BYTES[0] += len(txt)
+    return txt
 
 def iter_text_lines_entry(entry: Entry):
     """Lit les lignes de texte d'un objet Entry."""
