@@ -167,3 +167,27 @@ Version publique précédente : 8 modules + GUI Tkinter + décompression
   **LISEZ-MOI.txt** à la racine orientant les deux publics. `run_analysis.log`
   reste à la racine. GUI : le bouton « Ouvrir le rapport » pointe vers
   01_SYNTHESE_ENQUETEUR.
+
+## v2.3.2 — Passe unique multiprocessée (compte + WiFi + Bluetooth)
+
+Refactor **performance** des extracteurs texte, sans aucune régression
+(sortie **octet-pour-octet identique**, vérifiée en test).
+
+- **Passe unique** (`scan_text.py`, module `scan1`) : les trois extracteurs
+  texte — `extract_account`, `extract_wifi`, `extract_bluetooth` — ne
+  reparcourent plus l'arborescence chacun de leur côté. Chaque `.log/.txt`
+  est lu **une seule fois** et diffusé aux trois.
+- **Multiprocessing** : le travail lourd (regex) est réparti sur plusieurs
+  cœurs. Les workers produisent des « bundles » d'événements bruts ; le parent
+  les **rejoue dans l'ordre des fichiers** (`build_bundle` statique + 
+  `apply_bundle`), ce qui reproduit exactement la logique séquentielle (dont la
+  propagation passerelle/RSSI inter-fichiers du volet WiFi). Gain mesuré ~×1,7
+  sur 2 cœurs ; davantage sur plus de cœurs.
+- **Repli automatique** en séquentiel si le multiprocessing échoue, pour une
+  source archive (.zip/.7z), ou en dessous de 12 fichiers (overhead). La
+  **correction prime toujours sur la vitesse**.
+- Les modules `account` / `wifi` / `bt` restent disponibles séparément via
+  `--modules` (aucune fonction supprimée). Le pipeline par défaut utilise
+  `scan1` (placé après `mac`, car le volet WiFi lit `mac_found.csv`).
+- `test_v22.py` : 24/24 (ajout des contrôles « passe unique == modules » et
+  « parallèle == séquentiel », octet-pour-octet).

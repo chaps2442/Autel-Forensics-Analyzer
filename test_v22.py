@@ -113,6 +113,49 @@ def main():
         check("categorie Reseau presente", any('seau' in c for c in cats), str(cats))
         check("categorie Bluetooth presente", 'Bluetooth' in cats, str(cats))
 
+        # 6) PASSE UNIQUE (v2.3.2) : resultat identique aux modules separes
+        from scan_text import scan_text_single_pass
+        out2 = tempfile.mkdtemp(prefix="afap_out2_")
+        try:
+            extract_mac(src, out2)              # le volet WiFi lit mac_found.csv
+            scan_text_single_pass(src, out2)
+            for fn in ('account_identity.csv', 'wifi_networks.csv', 'bluetooth_devices.csv'):
+                pa, pb = os.path.join(out, fn), os.path.join(out2, fn)
+                a = open(pa, encoding='utf-8-sig').read() if os.path.isfile(pa) else None
+                b = open(pb, encoding='utf-8-sig').read() if os.path.isfile(pb) else None
+                check(f"passe unique == modules ({fn})",
+                      a is not None and a == b,
+                      "sortie differente" if a != b else "")
+        finally:
+            shutil.rmtree(out2, ignore_errors=True)
+
+        # 7) PASSE UNIQUE PARALLELE (v2.3.2) == sequentielle (byte-identique)
+        import scan_text as _st
+        src2 = tempfile.mkdtemp(prefix="afap_par_")
+        oP = tempfile.mkdtemp(prefix="afap_oP_")
+        oS = tempfile.mkdtemp(prefix="afap_oS_")
+        try:
+            dd = os.path.join(src2, "AppLog", "ser")
+            os.makedirs(dd)
+            for i in range(16):
+                with open(os.path.join(dd, f"l{i}.log"), "w", encoding="utf-8") as f:
+                    f.write(APPLOG)
+            _save = _st._PARALLEL_MIN_FILES
+            extract_mac(src2, oS)
+            _st._PARALLEL_MIN_FILES = 10**9            # force le sequentiel
+            _st.scan_text_single_pass(src2, oS)
+            extract_mac(src2, oP)
+            _st._PARALLEL_MIN_FILES = 12               # force le parallele
+            _st.scan_text_single_pass(src2, oP)
+            _st._PARALLEL_MIN_FILES = _save
+            for fn in ('account_identity.csv', 'wifi_networks.csv', 'bluetooth_devices.csv'):
+                a = open(os.path.join(oS, fn), encoding='utf-8-sig').read()
+                b = open(os.path.join(oP, fn), encoding='utf-8-sig').read()
+                check(f"parallele == sequentiel ({fn})", a == b, "sortie differente")
+        finally:
+            for _d in (src2, oP, oS):
+                shutil.rmtree(_d, ignore_errors=True)
+
         # bilan
         n_ok = sum(1 for _, ok, _ in RESULTS if ok)
         n = len(RESULTS)

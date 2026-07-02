@@ -12,6 +12,10 @@
 #   du COMPTE (création déduite du userId).
 #
 # Produit : account_identity.csv
+#
+# Architecture : la logique par fichier vit dans AccountConsumer (feed/finalize),
+# réutilisable par l'orchestrateur "passe unique" (scan_text.py). La fonction
+# extract_account reste un point d'entrée autonome au comportement identique.
 
 import re
 import csv
@@ -59,83 +63,115 @@ def _decode_jwt(payload_b64):
         return None
 
 
-def extract_account(src_dir, export_dir, skip_md5=None, **kwargs):
-    found = {}          # champ -> Counter(valeur)
-    phone_empty = False
-    jwt_userid = None
+class AccountConsumer:
+    """Consommateur "passe unique" : accumule l'identité compte à partir du texte
+    de chaque fichier .log/.txt, puis écrit account_identity.csv en finalize()."""
+    name = 'account'
 
-    def add(field, value):
+    def __init__(self):
+        self.found = {}          # champ -> {valeur: count}
+        self.phone_empty = False
+        self.jwt_userid = None
+
+    def _add(self, field, value):
         if not value:
             return
-        found.setdefault(field, {})
-        found[field][value] = found[field].get(value, 0) + 1
+        self.found.setdefault(field, {})
+        self.found[field][value] = self.found[field].get(value, 0) + 1
 
+    @staticmethod
+    def build_bundle(rel_path, mtime, data):
+        """Extraction LOURDE (regex) d'un fichier -> bundle picklable. Pur, sans
+        etat : utilisable en worker multiprocessing."""
+        adds = []
+        for m in USER_RE.finditer(data):
+            adds.append(("autelId (User{})", m.group(1)))
+            adds.append(("nickname", m.group(2)))
+        for field, rx in KV_RE.items():
+            for m in rx.finditer(data):
+                adds.append((field, m.group(1)))
+        for e in EMAIL_RE.finditer(data):
+            v = e.group(0)
+            if "autel.com" not in v and not v[0].isdigit() and "drm@" not in v:
+                adds.append(("email (brut)", v))
+        phone_empty = bool(re.search(r'phoneNumber\s*[:=]\s*,|"phoneNumber":""|phoneNumber=,', data))
+        jwts = []
+        for m in JWT_RE.finditer(data):
+            j = _decode_jwt(m.group(1))
+            if j and str(j.get("sub", "")).isdigit() and len(str(j.get("sub"))) >= 15:
+                jwts.append(str(j.get("sub")))
+        return {'adds': adds, 'phone_empty': phone_empty, 'jwts': jwts}
+
+    def apply_bundle(self, b):
+        """Application LEGERE (etat), rejouee dans l'ordre des fichiers."""
+        for field, value in b['adds']:
+            self._add(field, value)
+        if b['phone_empty']:
+            self.phone_empty = True
+        for uid in b['jwts']:
+            self.jwt_userid = uid
+
+    def feed(self, entry, data):
+        self.apply_bundle(self.build_bundle(entry.rel_path, entry.mtime, data))
+
+    def finalize(self, export_dir):
+        found = self.found
+
+        def top(field):
+            d = found.get(field, {})
+            return max(d, key=d.get) if d else ""
+
+        userid = top("userId") or self.jwt_userid or ""
+        if not userid:
+            for f in found:
+                for v in found[f]:
+                    if v.isdigit() and len(v) >= 15:
+                        userid = v
+                        break
+
+        rows = []
+
+        def emit(label, value, note=""):
+            if value:
+                rows.append([label, value, note])
+
+        emit("Compte Autel (autelId)", top("autelId (User{})") or top("autelId"))
+        emit("E-mail du compte", top("email") or top("email (brut)"))
+        emit("Pseudo (nickname)", top("nickname"))
+        emit("Username interne Autel", top("username"))
+        emit("userId numérique", userid, "identifiant horodaté (ns epoch)")
+        if userid:
+            emit("Création du compte (déduite)", userid_to_creation(userid),
+                 "userId / 1e9 = secondes depuis epoch Unix")
+        emit("Pays", top("country"))
+        emit("Indicatif", top("cc"))
+        emit("Rôle", top("role"))
+        emit("Téléphone", "AUCUN (champ phoneNumber vide)" if self.phone_empty else (top("phone") or ""),
+             "constat" if self.phone_empty else "")
+        emit("SN tablette", top("sn"))
+        emit("Enregistrement appareil (revendeur)", top("regTime") or top("fitStartDate"),
+             "propriété APPAREIL, pas du compte")
+        emit("Revendeur (sealerAutelID)", top("sealer"), "distinct du compte")
+
+        f, w = open_csv(export_dir, 'account_identity.csv',
+                        ['element', 'valeur', 'note'])
+        try:
+            for r in rows:
+                w.writerow(r)
+        finally:
+            f.close()
+        return rows
+
+
+def extract_account(src_dir, export_dir, skip_md5=None, **kwargs):
+    """Point d'entrée autonome : une passe sur les .log/.txt (comportement
+    identique à l'orchestrateur, mais pour ce seul module)."""
+    c = AccountConsumer()
     try:
         for entry in iter_entries(src_dir, include_ext=('.log', '.txt')):
             if entry.is_os and should_skip(entry.path, skip_md5):
                 continue
-            data = read_text_cached(entry)
-
-            for m in USER_RE.finditer(data):
-                add("autelId (User{})", m.group(1))
-                add("nickname", m.group(2))
-            for field, rx in KV_RE.items():
-                for m in rx.finditer(data):
-                    add(field, m.group(1))
-            for e in EMAIL_RE.finditer(data):
-                v = e.group(0)
-                if "autel.com" not in v and not v[0].isdigit() and "drm@" not in v:
-                    add("email (brut)", v)
-            if re.search(r'phoneNumber\s*[:=]\s*,|"phoneNumber":""|phoneNumber=,', data):
-                phone_empty = True
-            for m in JWT_RE.finditer(data):
-                j = _decode_jwt(m.group(1))
-                if j and str(j.get("sub", "")).isdigit() and len(str(j.get("sub"))) >= 15:
-                    jwt_userid = str(j.get("sub"))
+            c.feed(entry, read_text_cached(entry))
     except Exception as e:
         logging.warning(f"extract_account: {e}")
-
-    def top(field):
-        d = found.get(field, {})
-        return max(d, key=d.get) if d else ""
-
-    userid = top("userId") or jwt_userid or ""
-    # userId peut aussi apparaître dans autelId si compte = email ; on prend le JWT sub sinon
-    if not userid:
-        for f in found:
-            for v in found[f]:
-                if v.isdigit() and len(v) >= 15:
-                    userid = v
-                    break
-
-    rows = []
-    def emit(label, value, note=""):
-        if value:
-            rows.append([label, value, note])
-
-    emit("Compte Autel (autelId)", top("autelId (User{})") or top("autelId"))
-    emit("E-mail du compte", top("email") or top("email (brut)"))
-    emit("Pseudo (nickname)", top("nickname"))
-    emit("Username interne Autel", top("username"))
-    emit("userId numérique", userid, "identifiant horodaté (ns epoch)")
-    if userid:
-        emit("Création du compte (déduite)", userid_to_creation(userid),
-             "userId / 1e9 = secondes depuis epoch Unix")
-    emit("Pays", top("country"))
-    emit("Indicatif", top("cc"))
-    emit("Rôle", top("role"))
-    emit("Téléphone", "AUCUN (champ phoneNumber vide)" if phone_empty else (top("phone") or ""),
-         "constat" if phone_empty else "")
-    emit("SN tablette", top("sn"))
-    emit("Enregistrement appareil (revendeur)", top("regTime") or top("fitStartDate"),
-         "propriété APPAREIL, pas du compte")
-    emit("Revendeur (sealerAutelID)", top("sealer"), "distinct du compte")
-
-    f, w = open_csv(export_dir, 'account_identity.csv',
-                    ['element', 'valeur', 'note'])
-    try:
-        for r in rows:
-            w.writerow(r)
-    finally:
-        f.close()
-    return rows
+    return c.finalize(export_dir)

@@ -169,6 +169,30 @@ def read_text_cached(entry):
         _TEXT_CACHE_BYTES[0] += len(txt)
     return txt
 
+def run_text_consumers(src, consumers, include_ext=('.log', '.txt'), skip_md5=None):
+    """PASSE UNIQUE : parcourt l'arborescence texte UNE seule fois, lit chaque
+    fichier UNE fois (via le cache) et le fournit à tous les consommateurs.
+
+    Un consommateur est un objet avec :
+      - .feed(entry, text)  : accumule ses résultats pour ce fichier ;
+      - .finalize(export_dir) : écrit son CSV et renvoie ses lignes (appelé
+        par l'appelant, PAS ici).
+
+    Garantit une seule lecture disque par fichier, même au-delà du plafond du
+    cache texte. Les fichiers du skiplist (MD5) sont écartés avant les feed().
+    Renvoie la liste des consommateurs (pour enchaîner les finalize())."""
+    for entry in iter_entries(src, include_ext=include_ext):
+        if entry.is_os and should_skip(entry.path, skip_md5):
+            continue
+        text = read_text_cached(entry)
+        for c in consumers:
+            try:
+                c.feed(entry, text)
+            except Exception as e:
+                logging.debug(f"consumer {getattr(c, 'name', c)} feed {entry.rel_path}: {e}")
+    return consumers
+
+
 def iter_text_lines_entry(entry: Entry):
     """Lit les lignes de texte d'un objet Entry."""
     try:

@@ -46,6 +46,7 @@ from create_master_timeline import create_master_timeline
 from create_timeline_html import create_timeline_html
 from parse_uart_bootlog import parse_uart_bootlog, detect_tablet_time
 from finalize_export import finalize_export
+from scan_text import scan_text_single_pass
 from clock_offset import ClockOffset
 
 try:
@@ -76,6 +77,7 @@ MODULES = {
     'bootlog':  ('UART boot log',       parse_uart_bootlog, {}),
     'wifi':     ('WiFi / tethering',    extract_wifi, {}),
     'bt':       ('Bluetooth devices',   extract_bluetooth, {}),
+    'scan1':    ('Passe unique compte+WiFi+BT', scan_text_single_pass, {}),
     'kyc':      ('KYC QR decode',       extract_kyc_qr, {}),
     'timeline': ('Timeline HTML',       create_timeline_report, {}),
     'report':   ('Forensic report',     create_forensic_report, {}),
@@ -85,15 +87,19 @@ MODULES = {
 }
 
 # Ordre par défaut (rapports/consolidation en dernier ; 'master' tout à la fin
-# car il agrège les CSV produits par mac/account/wifi/kyc).
+# car il agrège les CSV produits par mac/scan1/kyc).
+# 'scan1' = PASSE UNIQUE : lit les .log/.txt une seule fois et alimente
+# compte + WiFi + Bluetooth (remplace account/wifi/bt dans le pipeline par
+# défaut ; ces trois modules restent disponibles séparément via --modules).
+# Placé APRÈS 'mac' car le volet WiFi lit mac_found.csv.
 DEFAULT_ORDER = ['vins', 'logs', 'mac', 'user', 'pwd', 'vehref', 'dcim', 'sqlite',
                  'cloud', 'usage', 'vci', 'es', 'storage', 'secrets', 'events',
-                 'wal', 'account', 'bootlog', 'wifi', 'bt', 'kyc', 'timeline', 'report', 'master', 'htimeline', 'finalize']
+                 'wal', 'bootlog', 'scan1', 'kyc', 'timeline', 'report', 'master', 'htimeline', 'finalize']
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="AFAP v2.3.0 — Autel Forensics Analyzer (CLI mode)",
+        description="AFAP v2.3.2 — Autel Forensics Analyzer (CLI mode)",
         epilog="Exemple : python cli.py --source ./KM100_B --out ./out --lang en")
     p.add_argument('--source', '-s', required=True,
                    help="Source : dossier d'extraction OU archive .zip/.7z")
@@ -122,7 +128,7 @@ def main(argv=None):
                    help="Décalage en secondes fourni directement "
                         "(tablette - réel). Alternative à --tablet-time/--real-time.")
     p.add_argument('--quiet', '-q', action='store_true', help="Sortie minimale")
-    p.add_argument('--version', action='version', version='AFAP 2.3.0')
+    p.add_argument('--version', action='version', version='AFAP 2.3.2')
     args = p.parse_args(argv)
 
     set_lang(args.lang)
@@ -175,7 +181,7 @@ def main(argv=None):
     scelle = os.path.basename(os.path.abspath(args.source).rstrip('/\\'))
 
     if not args.quiet:
-        print(f"[AFAP 2.2.0] Source: {args.source}")
+        print(f"[AFAP 2.3.2] Source: {args.source}")
         print(f"             Tablette: {serial} ({info.get('product_model','?')})  Langue rapport: {args.lang}")
         print(f"             Export: {export_dir}")
         print(f"             Horloge: {clock.human()}")

@@ -1,4 +1,4 @@
-# Autel Forensics Analyzer PRO (AFAP) v2.3.0
+# Autel Forensics Analyzer PRO (AFAP) v2.3.2
 
 > **Auteur :** Vincent Chapeau — Teel Technologies Canada
 > **Contact :** vincent.chapeau@teeltechcanada.com

@@ -78,6 +78,7 @@ from create_master_timeline import create_master_timeline
 from create_timeline_html import create_timeline_html
 from clock_offset import ClockOffset
 from finalize_export import finalize_export
+from scan_text import scan_text_single_pass
 from i18n import set_lang as _set_lang, get_lang as _get_lang
 
 # ==================================================================
@@ -333,10 +334,9 @@ class AutelApp(tk.Tk):
                 ("EventLog applicatif",                    extract_event_log),
                 ("WAL SQLite (indicateurs)",               extract_wal_indicators),
                 # --- Modules v2.2/2.3 ---
-                ("Identité compte (userId)",               extract_account),
                 ("Log UART (identité matérielle)",         parse_uart_bootlog),
-                ("WiFi / tethering",                       extract_wifi),
-                ("Bluetooth (appareils appairés)",         extract_bluetooth),
+                # Passe unique : lit les .log/.txt une seule fois -> compte + WiFi + Bluetooth
+                ("Compte + WiFi + Bluetooth (passe unique)", scan_text_single_pass),
                 ("QR KYC (photos DCIM)",                   extract_kyc_qr),
                 # --- Rapports (lisent les CSV produits — toujours en dernier) ---
                 ("Création de la Timeline",                create_timeline_report),

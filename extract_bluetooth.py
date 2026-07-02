@@ -8,6 +8,10 @@
 # et signale randomisée vs fixe + le fabricant (OUI).
 #
 # Produit : bluetooth_devices.csv
+#
+# Architecture : la logique par fichier vit dans BluetoothConsumer (feed/finalize),
+# réutilisable par l'orchestrateur "passe unique" (scan_text.py). La fonction
+# extract_bluetooth reste un point d'entrée autonome au comportement identique.
 
 import os
 import re
@@ -37,63 +41,95 @@ def _is_random(mac):
         return False
 
 
-def extract_bluetooth(src_dir, export_dir, skip_md5=None, **kwargs):
-    oui_db = load_oui_db(os.path.join(os.path.dirname(__file__), 'oui.csv'))
-    bonded = set()
-    a2dp = set()
-    seen_date = {}  # mac -> 'YYYY-MM-DD HH:MM:SS' (première occurrence)
-    names = {}          # mac -> set(noms)
-    loose_names = set()  # noms sans MAC associée
+class BluetoothConsumer:
+    """Consommateur "passe unique" pour les appareils Bluetooth (bonded/vus)."""
+    name = 'bt'
 
+    def __init__(self):
+        self.bonded = set()
+        self.a2dp = set()
+        self.seen_date = {}       # mac -> 'YYYY-MM-DD HH:MM:SS' (première occurrence)
+        self.names = {}           # mac -> set(noms)
+        self.loose_names = set()  # noms sans MAC associée
+
+    @staticmethod
+    def build_bundle(rel_path, mtime_raw, text):
+        """Extraction LOURDE (regex, ligne par ligne) -> bundle picklable (pur)."""
+        try:
+            fyear = datetime.datetime.fromtimestamp(mtime_raw).year if mtime_raw else datetime.datetime.now().year
+            fdate = datetime.datetime.fromtimestamp(mtime_raw).strftime('%Y-%m-%d %H:%M:%S') if mtime_raw else ""
+        except Exception:
+            fyear, fdate = datetime.datetime.now().year, ""
+        bonded = []
+        a2dp = []
+        names = []
+        loose = []
+        try:
+            for line in text.splitlines():
+                if len(line) > 4000:
+                    line = line[:4000]
+                tmm = TS_RE.search(line)
+                lts = f"{fyear:04d}-{tmm.group(1)}-{tmm.group(2)} {tmm.group(3)}" if tmm else fdate
+                for m in BONDED_RE.finditer(line):
+                    bonded.append((m.group(1).upper(), lts))
+                for m in A2DP_RE.finditer(line):
+                    a2dp.append(m.group(1).upper())
+                for m in NAME_MAC_RE.finditer(line):
+                    names.append((m.group(1).upper(), m.group(2).strip()))
+                for m in GETNAME_RE.finditer(line):
+                    loose.append(m.group(1).strip())
+        except Exception as e:
+            logging.debug(f"extract_bluetooth build {rel_path}: {e}")
+        return {'bonded': bonded, 'a2dp': a2dp, 'names': names, 'loose': loose}
+
+    def apply_bundle(self, b):
+        """Application LEGERE (etat), rejouee dans l'ordre des fichiers
+        (seen_date : premiere occurrence gagnante)."""
+        for mac, lts in b['bonded']:
+            self.bonded.add(mac)
+            self.seen_date.setdefault(mac, lts)
+        for mac in b['a2dp']:
+            self.a2dp.add(mac)
+        for mac, name in b['names']:
+            self.names.setdefault(mac, set()).add(name)
+        for name in b['loose']:
+            self.loose_names.add(name)
+
+    def feed(self, entry, text):
+        self.apply_bundle(self.build_bundle(entry.rel_path, entry.mtime, text))
+
+    def finalize(self, export_dir):
+        oui_db = load_oui_db(os.path.join(os.path.dirname(__file__), 'oui.csv'))
+        rows = []
+        f, w = open_csv(export_dir, 'bluetooth_devices.csv',
+                        ['mac', 'type_mac', 'fabricant_oui', 'profil', 'noms_associes', 'statut', 'date'])
+        try:
+            allmacs = self.bonded | self.a2dp
+            for mac in sorted(allmacs):
+                typ = "randomisée" if _is_random(mac) else "FIXE (universelle)"
+                vendor = get_vendor(mac, oui_db)
+                profil = "A2DP (audio)" if mac in self.a2dp else ""
+                nm = "; ".join(sorted(self.names.get(mac, [])))
+                statut = "APPAIRÉ (bonded)" if mac in self.bonded else "vu"
+                w.writerow([mac, typ, vendor, profil, nm, statut, self.seen_date.get(mac, '')])
+                rows.append([mac, statut])
+            for n in sorted(self.loose_names):
+                if n and not n.isdigit():
+                    w.writerow(["", "", "", "", n, "nom d'appareil vu (BT/scan)", ""])
+        finally:
+            f.close()
+        return rows
+
+
+def extract_bluetooth(src_dir, export_dir, skip_md5=None, **kwargs):
+    """Point d'entrée autonome : une passe sur les .log/.txt (comportement
+    identique à l'orchestrateur, mais pour ce seul module)."""
+    c = BluetoothConsumer()
     try:
         for entry in iter_entries(src_dir, include_ext=('.log', '.txt')):
             if entry.is_os and should_skip(entry.path, skip_md5):
                 continue
-            try:
-                fyear = datetime.datetime.fromtimestamp(entry.mtime).year if entry.mtime else datetime.datetime.now().year
-                fdate = datetime.datetime.fromtimestamp(entry.mtime).strftime('%Y-%m-%d %H:%M:%S') if entry.mtime else ""
-            except Exception:
-                fyear, fdate = datetime.datetime.now().year, ""
-            # Traitement LIGNE PAR LIGNE : évite tout backtracking catastrophique
-            # (regex sur gros blob) et l'horodatage Android est porté par la ligne.
-            try:
-                for line in read_text_cached(entry).splitlines():
-                    if len(line) > 4000:
-                        line = line[:4000]
-                    tmm = TS_RE.search(line)
-                    lts = f"{fyear:04d}-{tmm.group(1)}-{tmm.group(2)} {tmm.group(3)}" if tmm else fdate
-                    for m in BONDED_RE.finditer(line):
-                        mac = m.group(1).upper()
-                        bonded.add(mac)
-                        seen_date.setdefault(mac, lts)
-                    for m in A2DP_RE.finditer(line):
-                        a2dp.add(m.group(1).upper())
-                    for m in NAME_MAC_RE.finditer(line):
-                        names.setdefault(m.group(1).upper(), set()).add(m.group(2).strip())
-                    for m in GETNAME_RE.finditer(line):
-                        loose_names.add(m.group(1).strip())
-            except Exception as e:
-                logging.debug(f"extract_bluetooth ligne {entry.rel_path}: {e}")
+            c.feed(entry, read_text_cached(entry))
     except Exception as e:
         logging.warning(f"extract_bluetooth: {e}")
-
-    rows = []
-    f, w = open_csv(export_dir, 'bluetooth_devices.csv',
-                    ['mac', 'type_mac', 'fabricant_oui', 'profil', 'noms_associes', 'statut', 'date'])
-    try:
-        allmacs = bonded | a2dp
-        for mac in sorted(allmacs):
-            typ = "randomisée" if _is_random(mac) else "FIXE (universelle)"
-            vendor = get_vendor(mac, oui_db)
-            profil = "A2DP (audio)" if mac in a2dp else ""
-            nm = "; ".join(sorted(names.get(mac, [])))
-            statut = "APPAIRÉ (bonded)" if mac in bonded else "vu"
-            w.writerow([mac, typ, vendor, profil, nm, statut, seen_date.get(mac, '')])
-            rows.append([mac, statut])
-        # noms observés sans MAC (contexte)
-        for n in sorted(loose_names):
-            if n and not n.isdigit():
-                w.writerow(["", "", "", "", n, "nom d'appareil vu (BT/scan)", ""])
-    finally:
-        f.close()
-    return rows
+    return c.finalize(export_dir)
