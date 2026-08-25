@@ -1,4 +1,4 @@
-# cli.py — AFAP v2.3.0 — Mode ligne de commande
+# cli.py — AFAP v2.4.0 — Mode ligne de commande
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Usage :
@@ -29,6 +29,8 @@ from extract_dcim_media import extract_dcim_media
 from export_sqlite_tables import export_sqlite_tables
 from create_timeline_report import create_timeline_report
 from extract_cloud_e_data import extract_cloud_e_data
+from extract_operations import extract_operations
+from export_docx import export_docx
 from extract_module_usage import extract_module_usage
 from extract_vci_logs import extract_vci_logs
 from extract_es_history import extract_es_history
@@ -66,6 +68,8 @@ MODULES = {
     'sqlite':   ('SQLite tables',       export_sqlite_tables,
                  {'tables': ['tb_history_menu', 'tb_user_info', 'tb_vci_record']}),
     'cloud':    ('CloudEData',          extract_cloud_e_data, {}),
+    'operations': ('Vehicle operations', extract_operations, {}),
+    'exportdocx': ('Export DOCX',        export_docx,        {}),
     'usage':    ('Module usage',        extract_module_usage, {}),
     'vci':      ('VCI logs',            extract_vci_logs, {}),
     'es':       ('ES history',          extract_es_history, {}),
@@ -93,13 +97,13 @@ MODULES = {
 # défaut ; ces trois modules restent disponibles séparément via --modules).
 # Placé APRÈS 'mac' car le volet WiFi lit mac_found.csv.
 DEFAULT_ORDER = ['vins', 'logs', 'mac', 'user', 'pwd', 'vehref', 'dcim', 'sqlite',
-                 'cloud', 'usage', 'vci', 'es', 'storage', 'secrets', 'events',
-                 'wal', 'bootlog', 'scan1', 'kyc', 'timeline', 'report', 'master', 'htimeline', 'finalize']
+                 'cloud', 'operations', 'usage', 'vci', 'es', 'storage', 'secrets', 'events',
+                 'wal', 'bootlog', 'scan1', 'kyc', 'timeline', 'report', 'exportdocx', 'master', 'htimeline', 'finalize']
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="AFAP v2.3.2 — Autel Forensics Analyzer (CLI mode)",
+        description="AFAP v2.4.0 — Autel Forensics Analyzer (CLI mode)",
         epilog="Exemple : python cli.py --source ./KM100_B --out ./out --lang en")
     p.add_argument('--source', '-s', required=True,
                    help="Source : dossier d'extraction OU archive .zip/.7z")
@@ -128,7 +132,7 @@ def main(argv=None):
                    help="Décalage en secondes fourni directement "
                         "(tablette - réel). Alternative à --tablet-time/--real-time.")
     p.add_argument('--quiet', '-q', action='store_true', help="Sortie minimale")
-    p.add_argument('--version', action='version', version='AFAP 2.3.2')
+    p.add_argument('--version', action='version', version='AFAP 2.4.0')
     args = p.parse_args(argv)
 
     set_lang(args.lang)
@@ -181,7 +185,7 @@ def main(argv=None):
     scelle = os.path.basename(os.path.abspath(args.source).rstrip('/\\'))
 
     if not args.quiet:
-        print(f"[AFAP 2.3.2] Source: {args.source}")
+        print(f"[AFAP 2.4.0] Source: {args.source}")
         print(f"             Tablette: {serial} ({info.get('product_model','?')})  Langue rapport: {args.lang}")
         print(f"             Export: {export_dir}")
         print(f"             Horloge: {clock.human()}")

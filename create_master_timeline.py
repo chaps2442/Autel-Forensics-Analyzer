@@ -1,4 +1,4 @@
-# create_master_timeline.py — AFAP
+# create_master_timeline.py — AFAP v2.4.0
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Construit UNE table maître unique, importable (Mercure), consolidant tous les
@@ -10,6 +10,10 @@
 # (voir clock_offset.py / options CLI --tablet-time / --real-time).
 #
 # Produit : Chronologie_MAITRE.csv  (+ s'appuie sur les CSV des autres modules)
+#
+# v2.4 : prend aussi en charge les sessions DataLogging en LOG BRUT non zippé
+# (agencement KM100 : DataLogging/data/NormalSys_*_main.log), en plus des
+# archives .zip (agencement KM100E). Voir aussi le module `operations`.
 
 import os
 import re
@@ -26,6 +30,9 @@ MAKES = ("Toyota", "Lexus", "Nissan", "Renault", "Citroen", "Peugeot", "VW",
 COLS = ["no", "date_tablette", "heure_tablette", "heure_fin", "duree", "date_corrigee",
         "categorie", "constructeur", "modele", "operation", "detail", "mac_address",
         "fiabilite", "scelle", "sn_tablette", "compte_autel", "source_fichier", "horodatage"]
+
+# segments de dossier qui ne sont pas une marque
+_NOT_BRAND = {'data', 'keytooldiag', 'keytoolvideo'}
 
 
 def _dt_from_name(s):
@@ -49,6 +56,23 @@ def _dur(a, b):
         return str(datetime.datetime.strptime(b, f) - datetime.datetime.strptime(a, f))
     except Exception:
         return ""
+
+
+def _funcname(data):
+    for m in re.finditer(r'"FuncName"\s*:\s*"([^"]{2,90})"', data):
+        if "," not in m.group(1) and m.group(1).lower() != "keytool":
+            return m.group(1)
+    return ""
+
+
+def _make_from_path(rel):
+    parts = rel.split('/')
+    if 'DataLogging' in parts:
+        i = parts.index('DataLogging')
+        if i + 1 < len(parts):
+            b = parts[i + 1]
+            return "" if b.lower() in _NOT_BRAND else b
+    return ""
 
 
 def create_master_timeline(src_dir, export_dir, skip_md5=None, serial="inconnu",
@@ -92,50 +116,86 @@ def create_master_timeline(src_dir, export_dir, skip_md5=None, serial="inconnu",
             fiabilite=fiab, scelle=scelle, sn_tablette=serial,
             compte_autel=compte, source_fichier=src, horodatage=d))
 
-    # --- opérations clé + sessions + EEPROM depuis la source (DataLogging/UserData) ---
-    try:
-        for entry in iter_entries(src_dir, include_ext=('.zip',)):
-            rel = entry.rel_path.replace('\\', '/')
-            if '/DataLogging/' not in '/' + rel:
-                continue
-            constr_dir = ""
-            parts = rel.split('/')
-            if 'DataLogging' in parts:
-                i = parts.index('DataLogging')
-                if i + 1 < len(parts):
-                    constr_dir = parts[i + 1]
-            # session (horodatage = nom)
-            add(_dt_from_name(os.path.basename(rel)), "Session diagnostic", constr_dir,
-                "", "", os.path.basename(rel), rel)
-            # opération clé (lire le _main.log interne)
-            try:
-                with entry.open_binary() as b:
-                    zf = zipfile.ZipFile(b)
-                    for n in zf.namelist():
-                        if not n.lower().endswith("main.log"):
-                            continue
-                        data = zf.read(n).decode("utf-8", "ignore")
-                        fn = ""
-                        for m in re.finditer(r'"FuncName"\s*:\s*"([^"]{2,90})"', data):
-                            if "," not in m.group(1) and m.group(1).lower() != "keytool":
-                                fn = m.group(1)
-                                break
-                        if not fn:
-                            continue
-                        st = _field(data, "FuncStartTime")
-                        et = _field(data, "FuncEndTime")
-                        veh = ""
-                        for mm in re.finditer(r'title\\?"\s*:\s*\\?"([^"\\]{3,50})', data):
-                            if any(mk.lower() in mm.group(1).lower() for mk in MAKES):
-                                veh = mm.group(1).strip()
-                                break
-                        add(st or _dt_from_name(os.path.basename(rel)), "Opération clé",
-                            constr_dir or "Toyota", veh, fn,
-                            "mode OBD" if "OBD" in data[:6000] else "", rel, fin=et)
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning(f"master: DataLogging: {e}")
+    # --- opérations / sessions (DataLogging) ---
+    # v2.4 : source unique FIABLE = vehicle_operations.csv (module `operations`,
+    # exécuté avant `master`). Gère les deux agencements (KM100E .zip / KM100 .log)
+    # et l'identification marque+modèle correcte. Repli sur l'ancien parsing si
+    # le CSV est absent (rétro-compatibilité avec un pipeline sans `operations`).
+    ops_csv = os.path.join(export_dir, 'vehicle_operations.csv')
+    if os.path.isfile(ops_csv):
+        try:
+            with open(ops_csv, encoding='utf-8-sig') as f:
+                for r in csv.DictReader(f):
+                    hor = r.get('datetime_tablette', '')
+                    func = (r.get('fonction') or '').strip()
+                    kind = r.get('type_session', '')
+                    if func:
+                        add(hor, "Opération clé", r.get('marque', ''), r.get('modele', ''),
+                            func, r.get('menu_path', ''), r.get('source', ''))
+                    else:
+                        det = {"communication": "communication véhicule (sans fonction)",
+                               "vide": "fichier vide"}.get(kind, "")
+                        add(hor, "Session diagnostic", r.get('marque', ''),
+                            r.get('modele', ''), "", det, r.get('source', ''))
+        except Exception as e:
+            logging.warning(f"master: vehicle_operations.csv: {e}")
+    else:
+        # --- repli : archives .zip (KM100E) ---
+        try:
+            for entry in iter_entries(src_dir, include_ext=('.zip',)):
+                rel = entry.rel_path.replace('\\', '/')
+                if '/DataLogging/' not in '/' + rel:
+                    continue
+                constr_dir = _make_from_path(rel)
+                add(_dt_from_name(os.path.basename(rel)), "Session diagnostic", constr_dir,
+                    "", "", os.path.basename(rel), rel)
+                try:
+                    with entry.open_binary() as b:
+                        zf = zipfile.ZipFile(b)
+                        for n in zf.namelist():
+                            if not n.lower().endswith("main.log"):
+                                continue
+                            data = zf.read(n).decode("utf-8", "ignore")
+                            fn = _funcname(data)
+                            if not fn:
+                                continue
+                            st = _field(data, "FuncStartTime")
+                            et = _field(data, "FuncEndTime")
+                            veh = ""
+                            for mm in re.finditer(r'title\\?"\s*:\s*\\?"([^"\\]{3,50})', data):
+                                if any(mk.lower() in mm.group(1).lower() for mk in MAKES):
+                                    veh = mm.group(1).strip()
+                                    break
+                            add(st or _dt_from_name(os.path.basename(rel)), "Opération clé",
+                                constr_dir or "Toyota", veh, fn,
+                                "mode OBD" if "OBD" in data[:6000] else "", rel, fin=et)
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning(f"master: DataLogging(.zip): {e}")
+        # --- repli : logs bruts non zippés (KM100) ---
+        try:
+            for entry in iter_entries(src_dir, include_ext=('.log',)):
+                rel = entry.rel_path.replace('\\', '/')
+                base = os.path.basename(rel)
+                if '/DataLogging/' not in '/' + rel or not base.lower().endswith('_main.log'):
+                    continue
+                constr_dir = _make_from_path(rel)
+                hor = _dt_from_name(base)
+                add(hor, "Session diagnostic", constr_dir, "", "", base, rel)
+                try:
+                    with entry.open_binary() as b:
+                        data = b.read().decode("utf-8", "ignore")
+                except Exception:
+                    data = ""
+                fn = _funcname(data)
+                if fn:
+                    st = _field(data, "FuncStartTime")
+                    et = _field(data, "FuncEndTime")
+                    add(st or hor, "Opération clé", constr_dir, "", fn,
+                        "mode OBD" if "OBD" in data[:6000] else "", rel, fin=et)
+        except Exception as e:
+            logging.warning(f"master: DataLogging(.log): {e}")
 
     # EEPROM
     try:

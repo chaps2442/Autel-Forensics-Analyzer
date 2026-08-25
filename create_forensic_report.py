@@ -1,4 +1,4 @@
-# create_forensic_report.py — AFAP v2.1.0
+# create_forensic_report.py — AFAP v2.4.0
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Génère un VRAI rapport forensique consolidé en Markdown.
@@ -6,6 +6,7 @@
 #   0. Synthèse exécutive (executive summary) ← NOUVEAU en v2.1
 #   1. Identification de la tablette
 #   2. Opérations véhicule (CloudEData)
+#   2bis. Opérations véhicule (sessions DataLogging)   ← NOUVEAU en v2.4
 #   3. Usage par marque
 #   4. Logs VCI
 #   5. Stockage externe
@@ -55,6 +56,17 @@ def _section_exec_summary(export_dir, info):
     cloud = _read(os.path.join(export_dir, 'cloud_e_data.csv'))
     if cloud:
         bullets.append(T('exec.ops', n=len(cloud)))
+
+    # v2.4 : opérations véhicule via DataLogging (complément de CloudEData)
+    ops = _read(os.path.join(export_dir, 'vehicle_operations.csv'))
+    named = [r for r in ops if (r.get('fonction') or '').strip()]
+    if named:
+        ex = "; ".join(f"{r.get('marque','')} {r.get('modele','')} — {r.get('fonction','')}"
+                       for r in named[:2])
+        bullets.append(
+            (f"{len(named)} opération(s) véhicule nommée(s) (sessions DataLogging), ex. {ex}"
+             if get_lang() != 'en' else
+             f"{len(named)} named vehicle operation(s) (DataLogging sessions), e.g. {ex}"))
 
     vci_idx = _read(os.path.join(export_dir, 'vci_logs_index.csv'))
     if vci_idx:
@@ -147,6 +159,51 @@ def _section_cloud_e_data(export_dir):
             ip=r.get('ip_locale','')))
     if len(rows) > 50:
         out.append("| … | … | … | … | … | … | … |")
+    out.append("")
+    return '\n'.join(out)
+
+# ----------------------------------------------------------------------
+def _section_operations(export_dir):
+    """v2.4 - Opérations véhicule extraites des sessions MaxiApScan/DataLogging.
+    Complément de CloudEData : indispensable quand Scan/CloudEData est absent
+    (extractions sdcard-only, ex. KM100E)."""
+    rows = _read(os.path.join(export_dir, 'vehicle_operations.csv'))
+    if not rows:
+        return ""
+    fr = get_lang() != 'en'
+    named = [r for r in rows if (r.get('fonction') or '').strip()]
+    out = ["## 2bis. " + ("Opérations véhicule (sessions DataLogging)"
+                          if fr else "Vehicle operations (DataLogging sessions)") + "\n"]
+    if fr:
+        out.append(f"**{len(rows)} session(s)**, dont **{len(named)}** avec fonction nommée. "
+                   "Source : `MaxiApScan/DataLogging/`. Les fichiers sont nommés par "
+                   "horodatage (pas de couleur/plaque) ; le véhicule est identifié par "
+                   "marque + modèle.\n")
+    else:
+        out.append(f"**{len(rows)} session(s)**, of which **{len(named)}** with a named "
+                   "function. Source: `MaxiApScan/DataLogging/`. Files are named by "
+                   "timestamp; the vehicle is identified by make + model.\n")
+    out.append("| " + ("Horodatage tablette" if fr else "Tablet time") + " | "
+               + ("Marque" if fr else "Make") + " | " + ("Modèle" if fr else "Model") + " | "
+               + ("Fonction / nature" if fr else "Function / type") + " |")
+    out.append("|---|---|---|---|")
+    kind_lbl = {
+        'communication': ("communication (sans fonction)" if fr else "communication (no function)"),
+        'vide': ("fichier vide" if fr else "empty file"),
+        'session': "session",
+    }
+    for r in rows[:100]:
+        fn = (r.get('fonction') or '').strip() or kind_lbl.get(r.get('type_session',''), r.get('type_session',''))
+        out.append(f"| {r.get('datetime_tablette','')} | {r.get('marque','')} | "
+                   f"{r.get('modele','')} | {fn} |")
+    if len(rows) > 100:
+        out.append("| … | … | … | … |")
+    out.append("")
+    out.append(("> Les marques Toyota/Lexus n'inscrivent pas le VIN dans la clé : "
+                "l'absence de VIN est une caractéristique, pas une lacune."
+                if fr else
+                "> Toyota/Lexus do not store the VIN in the key: the absence of a VIN is a "
+                "characteristic, not a gap."))
     out.append("")
     return '\n'.join(out)
 
@@ -317,7 +374,7 @@ def _section_methodology():
 **Sources covered**: external partition (`/sdcard`), SQLite databases if present, and `/data/data/` (only on full physical extractions).
 
 **Limitations**:
-- On `sdcard-only` extractions, `masdas.db` is absent and several modules will be empty — the report falls back to alternative sources (CloudEData, VciLogs).
+- On `sdcard-only` extractions, `masdas.db` is absent and several modules will be empty — the report falls back to alternative sources (CloudEData, DataLogging, VciLogs).
 - The `Scan/EventLog/<epoch_ms>` payload format is proprietary and not decoded.
 - SQLite WAL files are automatically merged on read-only opening; deleted-transaction carving requires a specialized tool (out of scope).
 
@@ -328,7 +385,7 @@ def _section_methodology():
 **Sources couvertes** : partition externe (`/sdcard`), bases SQLite si présentes, et `/data/data/` (uniquement sur extraction physique complète).
 
 **Limites** :
-- Sur extraction « sdcard-only », `masdas.db` est absent et plusieurs modules seront vides — le rapport bascule sur sources alternatives (CloudEData, VciLogs).
+- Sur extraction « sdcard-only », `masdas.db` est absent et plusieurs modules seront vides — le rapport bascule sur sources alternatives (CloudEData, DataLogging, VciLogs).
 - Le payload des `Scan/EventLog/<epoch_ms>` est propriétaire, non décodé.
 - Les WAL SQLite sont fusionnés automatiquement en lecture seule ; le carving de transactions effacées nécessite un outil spécialisé (hors périmètre).
 
@@ -385,10 +442,10 @@ def _section_network(export_dir):
                    + ", ".join(f"`{r.get('bssid_ou_mac','')}`" for r in scan[:20]))
         out.append("")
         out.append(("> Une box vue au scan n'implique pas une connexion ; ses BSSID non "
-                    "randomisées sont géolocalisables (bases WiFi)."
+                    "randomisées sont géolocalisables par réquisition FAI/opérateur."
                     if _fr() else
                     "> A scanned AP does not imply a connection; its non-randomized BSSIDs "
-                    "are geolocatable (WiFi databases)."))
+                    "are geolocatable via ISP/carrier legal request."))
         out.append("")
     return '\n'.join(out)
 
@@ -447,12 +504,13 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
              f"**{T('report.model')} :** `{info.get('Product model', 'inconnu')}`  ",
              f"**{T('report.source')} :** `{src_dir}`  ",
              f"**{T('report.generated')} :** {now}  ",
-             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.2.1\n",
+             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.4.0\n",
              "---\n"]
 
     parts.append(_section_exec_summary(export_dir, info))
     parts.append(_section_identification(info))
     parts.append(_section_cloud_e_data(export_dir))
+    parts.append(_section_operations(export_dir))          # v2.4 : DataLogging
     parts.append(_section_module_usage(export_dir))
     parts.append(_section_vci_logs(export_dir))
     parts.append(_section_external_storage(export_dir))
@@ -468,7 +526,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
     parts.append(_section_methodology())
 
     parts.append("\n---\n")
-    parts.append(f"*AFAP v2.2.1 — Vincent Chapeau, Teel Technologies Canada.*\n")
+    parts.append(f"*AFAP v2.4.0 — Vincent Chapeau, Teel Technologies Canada.*\n")
 
     out_path = os.path.join(export_dir, 'rapport_forensique.md')
     with open(out_path, 'w', encoding='utf-8') as f:

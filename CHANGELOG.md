@@ -1,5 +1,14 @@
 # Changelog AFAP
 
+## v2.4.0 — Opérations véhicule (DataLogging) & export DOCX
+
+- Nouveau module `operations` : opérations réellement exécutées extraites des sessions `MaxiApScan/DataLogging/<marque>/NormalSys_*.zip` (KM100E) et `.../data/NormalSys_*_main.log` (KM100) — marque, modèle, FuncName, horodatage. Complémentaire de `cloud` (indispensable si CloudEData absent). Sortie `vehicle_operations.csv`.
+- `create_forensic_report` : section « 2bis. Opérations véhicule (DataLogging) » + point dans la synthèse exécutive.
+- `create_master_timeline` : lit `vehicle_operations.csv` (identification marque+modèle fiable, deux agencements) ; repli sur l'ancien parsing sinon.
+- Nouveau module `exportdocx` : rapport en Word à la charte Teel (logo, pagination) via pandoc + `TEEL_reference.docx`. Optionnel (sauté si pandoc absent).
+- HARDWARE_NOTES : voie bas niveau explicitée (Rockchip MaskROM + rkdeveloptool ; ni EDL Qualcomm ni BROM MediaTek ; image physique exploitable car /data f2fs nonencrypted).
+
+
 ## v2.1.0 — 2026-06-08
 
 Trois ajouts majeurs orientés terrain :

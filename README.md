@@ -1,4 +1,4 @@
-# Autel Forensics Analyzer PRO (AFAP) v2.3.2
+# Autel Forensics Analyzer PRO (AFAP) v2.4.0
 
 > **Auteur :** Vincent Chapeau — Teel Technologies Canada
 > **Contact :** vincent.chapeau@teeltechcanada.com
@@ -198,3 +198,16 @@ python cli.py --source ./KM100 --out ./out --bootlog ./bootlog.txt --real-time "
 → `device_bootlog.csv` (ID SoC, CID eMMC, versions, RTC, cycles batterie, état NV…).
 La RTC au boot sert d'heure tablette : le décalage est calculé automatiquement
 et appliqué à la colonne `date_corrigee` de la table maître.
+
+---
+
+## Modules v2.4 — Opérations véhicule & export DOCX
+
+| Module | Source(s) | Sortie |
+|---|---|---|
+| `extract_operations` (`operations`) | `MaxiApScan/DataLogging/<marque>/NormalSys_*.zip` (KM100E) et `.../data/NormalSys_*_main.log` (KM100) | `vehicle_operations.csv` |
+| `export_docx` (`exportdocx`) | `rapport_forensique.md` + `TEEL_reference.docx` | `rapport_forensique.docx` |
+
+`operations` est **complémentaire** de `cloud` (CloudEData) : indispensable sur les extractions « sdcard-only » où `Scan/CloudEData` est absent (cas KM100E), sinon aucune opération n'est reportée. Le rapport consolidé affiche une section « 2bis. Opérations véhicule (DataLogging) » ; la table maître Mercure les intègre également.
+
+Dépendance ajoutée : `pandoc` (obligatoire pour l'export DOCX ; sans lui, l'export est simplement sauté).
