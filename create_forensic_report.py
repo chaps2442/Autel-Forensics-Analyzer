@@ -1,4 +1,4 @@
-# create_forensic_report.py — AFAP v2.4.0
+# create_forensic_report.py — AFAP v2.4.1
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Génère un VRAI rapport forensique consolidé en Markdown.
@@ -504,7 +504,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
              f"**{T('report.model')} :** `{info.get('Product model', 'inconnu')}`  ",
              f"**{T('report.source')} :** `{src_dir}`  ",
              f"**{T('report.generated')} :** {now}  ",
-             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.4.0\n",
+             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.4.1\n",
              "---\n"]
 
     parts.append(_section_exec_summary(export_dir, info))
@@ -526,7 +526,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
     parts.append(_section_methodology())
 
     parts.append("\n---\n")
-    parts.append(f"*AFAP v2.4.0 — Vincent Chapeau, Teel Technologies Canada.*\n")
+    parts.append(f"*AFAP v2.4.1 — Vincent Chapeau, Teel Technologies Canada.*\n")
 
     out_path = os.path.join(export_dir, 'rapport_forensique.md')
     with open(out_path, 'w', encoding='utf-8') as f:

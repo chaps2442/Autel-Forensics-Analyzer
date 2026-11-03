@@ -52,6 +52,9 @@ def _process_file(task):
     if _SKIP and hashlib.md5(raw).hexdigest().lower() in _SKIP:
         return None
     text = raw.decode('utf-8', 'ignore')
+    # .xml / .json : compte seulement (préférences partagées, journaux JSON).
+    if not rel_path.lower().endswith(('.log', '.txt')):
+        return (AccountConsumer.build_bundle(rel_path, mtime, text), None, None)
     return (AccountConsumer.build_bundle(rel_path, mtime, text),
             WifiConsumer.build_bundle(rel_path, mtime, text),
             BluetoothConsumer.build_bundle(rel_path, mtime, text))
@@ -66,7 +69,7 @@ def scan_text_single_pass(src_dir, export_dir, skip_md5=None, **kwargs):
 
     tasks = []
     if os.path.isdir(src_dir):
-        for entry in iter_entries(src_dir, include_ext=('.log', '.txt')):
+        for entry in iter_entries(src_dir, include_ext=('.log', '.txt', '.xml', '.json')):
             if entry.is_os:
                 tasks.append((entry.path, entry.rel_path, entry.mtime))
 
@@ -83,8 +86,10 @@ def scan_text_single_pass(src_dir, export_dir, skip_md5=None, **kwargs):
                         continue
                     ab, wb, bb = res
                     acc.apply_bundle(ab)
-                    wifi.apply_bundle(wb)
-                    bt.apply_bundle(bb)
+                    if wb is not None:
+                        wifi.apply_bundle(wb)
+                    if bb is not None:
+                        bt.apply_bundle(bb)
             done = True
             logging.info(f"scan_text : passe unique parallèle ({nproc} procs, {len(tasks)} fichiers)")
         except Exception as e:
@@ -94,6 +99,9 @@ def scan_text_single_pass(src_dir, export_dir, skip_md5=None, **kwargs):
 
     if not done:
         run_text_consumers(src_dir, [acc, wifi, bt], include_ext=('.log', '.txt'), skip_md5=skip_md5)
+        # Compte : aussi les préférences partagées (.xml) et les journaux JSON
+        # (com.autel.push/shared_prefs/webPay.xml sur MaxiAP / sm2031).
+        run_text_consumers(src_dir, [acc], include_ext=('.xml', '.json'), skip_md5=skip_md5)
 
     all_rows = []
     for c in (acc, wifi, bt):

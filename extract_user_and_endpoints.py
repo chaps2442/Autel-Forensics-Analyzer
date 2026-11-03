@@ -6,7 +6,9 @@ import logging
 import datetime
 from core_scanner import iter_entries, iter_text_lines_entry, should_skip, open_csv
 
-UID_RE = re.compile(r'\buserId\s*[:=]\s*(\d+)\b', re.IGNORECASE)
+# userId en clair (userId=123) ou dans le JSON des requêtes UserCenter
+# ("userId":"1234567890", valeur entre guillemets : MaxiAP / sm2031).
+UID_RE = re.compile(r'\buserId"?\s*[:=]\s*"?(\d+)\b', re.IGNORECASE)
 URL_RE = re.compile(r'https?://[^\s\'"]+', re.IGNORECASE)
 
 def extract_user_and_endpoints(src_dir, export_dir, skip_md5=None, **kwargs):

@@ -1,5 +1,17 @@
 # Changelog AFAP
 
+## v2.4.1 — Compte utilisateur sur les tablettes MaxiAP / Rockchip sm2031
+
+Retour terrain : sur une extraction physique de tablette Autel Rockchip sm2031 (Android 9), seuls des VIN ressortaient, pas le compte. Sur cette plateforme le compte n'est pas dans les journaux `User{autelId=...}` :
+
+- `data/com.autel.push/shared_prefs/webPay.xml` : `AutelId` (identifiant du compte, au format e-mail), `registerTime`, `licence_dead_line`, `AreaCfgCode` ;
+- `media/0/Android/data/com.autel.base.userCenter/files/smart_update/log/smart_update_log.txt` : JSON des requêtes avec `"userId":"…"` (10 chiffres, entre guillemets, **non horodaté**), `deviceSn`, `deviceId`.
+
+Corrections :
+- `extract_account` et la passe unique `scan_text` lisent aussi les `.xml` et `.json` (pour le compte seulement ; WiFi et Bluetooth inchangés) ; préférences `<string name="AutelId">`, `registerTime`, `licence_dead_line` reconnues.
+- Motif `userId` avec ou sans guillemets (module compte et `extract_user_and_endpoints`) ; `deviceSn` et `deviceId` relevés ; un userId non horodaté est signalé comme tel au lieu de donner une date de création fausse.
+- Nouveau test `test_v241.py` (données fictives) ; `test_v22.py` inchangé, 24/24.
+
 ## v2.4.0 — Opérations véhicule (DataLogging) & export DOCX
 
 - Nouveau module `operations` : opérations réellement exécutées extraites des sessions `MaxiApScan/DataLogging/<marque>/NormalSys_*.zip` (KM100E) et `.../data/NormalSys_*_main.log` (KM100) — marque, modèle, FuncName, horodatage. Complémentaire de `cloud` (indispensable si CloudEData absent). Sortie `vehicle_operations.csv`.

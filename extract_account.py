@@ -34,11 +34,21 @@ KV_RE = {
     "country": re.compile(r"country=['\"]?([A-Z]{3,})"),
     "cc": re.compile(r'"cc"\s*:\s*"(\+\d{1,3})"'),
     "role": re.compile(r"roles=['\"]?([A-Z_]+)"),
-    "sn": re.compile(r'"sn"\s*:\s*"([A-Z0-9]{8,})"'),
+    "sn": re.compile(r'"(?:sn|deviceSn)"\s*:\s*"([A-Z0-9]{8,})"'),
+    # userId du compte dans le JSON des requêtes (MaxiAP / sm2031 : 10 chiffres,
+    # pas un horodatage ; KM100 : 15 à 19 chiffres, horodaté en ns).
+    "userId": re.compile(r'"?userId"?\s*[:=]\s*"?(\d{6,20})\b'),
+    "deviceId": re.compile(r'"deviceId"\s*:\s*"([^"]{4,64})"'),
     "regTime": re.compile(r'regTime[\'"]?\s*[:=]\s*[\'"]?(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)'),
     "fitStartDate": re.compile(r'fitStartDate"\s*:\s*"(\d{4}-\d\d-\d\d)'),
     "sealer": re.compile(r'sealerAutelID[\'"]?\s*[:=]\s*[\'"]?(\d+)'),
 }
+# Préférences partagées Android des applications Autel :
+# <string name="AutelId">…</string> (com.autel.push/shared_prefs/webPay.xml
+# sur MaxiAP / sm2031, avec registerTime et licence_dead_line).
+XML_PREF_RE = re.compile(r'<(?:string|long|int)\s+name="(AutelId|autelId|email|nickname|userId|registerTime|licence_dead_line)"(?:\s+value="([^"]*)")?\s*/?>([^<]*)')
+XML_FIELD = {"AutelId": "autelId", "autelId": "autelId", "email": "email", "nickname": "nickname",
+             "userId": "userId", "registerTime": "regTime", "licence_dead_line": "licence"}
 JWT_RE = re.compile(r'eyJ[A-Za-z0-9_\-]+\.(eyJ[A-Za-z0-9_\-]+)\.')
 EMAIL_RE = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')
 
@@ -90,6 +100,10 @@ class AccountConsumer:
         for field, rx in KV_RE.items():
             for m in rx.finditer(data):
                 adds.append((field, m.group(1)))
+        for m in XML_PREF_RE.finditer(data):
+            v = (m.group(2) if m.group(2) is not None else m.group(3)).strip()
+            if v:
+                adds.append((XML_FIELD[m.group(1)], v))
         for e in EMAIL_RE.finditer(data):
             v = e.group(0)
             if "autel.com" not in v and not v[0].isdigit() and "drm@" not in v:
@@ -139,7 +153,8 @@ class AccountConsumer:
         emit("E-mail du compte", top("email") or top("email (brut)"))
         emit("Pseudo (nickname)", top("nickname"))
         emit("Username interne Autel", top("username"))
-        emit("userId numérique", userid, "identifiant horodaté (ns epoch)")
+        emit("userId numérique", userid,
+             "identifiant horodaté (ns epoch)" if userid_to_creation(userid) else "identifiant du compte (non horodaté sur ce modèle)")
         if userid:
             emit("Création du compte (déduite)", userid_to_creation(userid),
                  "userId / 1e9 = secondes depuis epoch Unix")
@@ -149,9 +164,11 @@ class AccountConsumer:
         emit("Téléphone", "AUCUN (champ phoneNumber vide)" if self.phone_empty else (top("phone") or ""),
              "constat" if self.phone_empty else "")
         emit("SN tablette", top("sn"))
+        emit("Identifiant d'appareil (deviceId)", top("deviceId"))
         emit("Enregistrement appareil (revendeur)", top("regTime") or top("fitStartDate"),
              "propriété APPAREIL, pas du compte")
         emit("Revendeur (sealerAutelID)", top("sealer"), "distinct du compte")
+        emit("Fin de licence", top("licence"))
 
         f, w = open_csv(export_dir, 'account_identity.csv',
                         ['element', 'valeur', 'note'])
@@ -168,7 +185,9 @@ def extract_account(src_dir, export_dir, skip_md5=None, **kwargs):
     identique à l'orchestrateur, mais pour ce seul module)."""
     c = AccountConsumer()
     try:
-        for entry in iter_entries(src_dir, include_ext=('.log', '.txt')):
+        # .xml et .json aussi : préférences partagées et journaux JSON des
+        # applications Autel (smart_update_log, userCenter.xml…).
+        for entry in iter_entries(src_dir, include_ext=('.log', '.txt', '.xml', '.json')):
             if entry.is_os and should_skip(entry.path, skip_md5):
                 continue
             c.feed(entry, read_text_cached(entry))
