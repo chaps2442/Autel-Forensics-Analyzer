@@ -1,4 +1,4 @@
-# create_forensic_report.py — AFAP v2.4.1
+# create_forensic_report.py — AFAP v2.4.2
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Génère un VRAI rapport forensique consolidé en Markdown.
@@ -185,8 +185,8 @@ def _section_operations(export_dir):
                    "timestamp; the vehicle is identified by make + model.\n")
     out.append("| " + ("Horodatage tablette" if fr else "Tablet time") + " | "
                + ("Marque" if fr else "Make") + " | " + ("Modèle" if fr else "Model") + " | "
-               + ("Fonction / nature" if fr else "Function / type") + " |")
-    out.append("|---|---|---|---|")
+               + ("Fonction / nature" if fr else "Function / type") + " | VIN | VCI |")
+    out.append("|---|---|---|---|---|---|")
     kind_lbl = {
         'communication': ("communication (sans fonction)" if fr else "communication (no function)"),
         'vide': ("fichier vide" if fr else "empty file"),
@@ -195,9 +195,9 @@ def _section_operations(export_dir):
     for r in rows[:100]:
         fn = (r.get('fonction') or '').strip() or kind_lbl.get(r.get('type_session',''), r.get('type_session',''))
         out.append(f"| {r.get('datetime_tablette','')} | {r.get('marque','')} | "
-                   f"{r.get('modele','')} | {fn} |")
+                   f"{r.get('modele','')} | {fn} | {r.get('vin','')} | {r.get('vci','')} |")
     if len(rows) > 100:
-        out.append("| … | … | … | … |")
+        out.append("| … | … | … | … | … | … |")
     out.append("")
     out.append(("> Les marques Toyota/Lexus n'inscrivent pas le VIN dans la clé : "
                 "l'absence de VIN est une caractéristique, pas une lacune."
@@ -504,7 +504,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
              f"**{T('report.model')} :** `{info.get('Product model', 'inconnu')}`  ",
              f"**{T('report.source')} :** `{src_dir}`  ",
              f"**{T('report.generated')} :** {now}  ",
-             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.4.1\n",
+             f"**{T('report.tool')} :** Autel Forensics Analyzer PRO (AFAP) v2.4.2\n",
              "---\n"]
 
     parts.append(_section_exec_summary(export_dir, info))
@@ -526,7 +526,7 @@ def create_forensic_report(src_dir, export_dir, skip_md5=None, **kwargs):
     parts.append(_section_methodology())
 
     parts.append("\n---\n")
-    parts.append(f"*AFAP v2.4.1 — Vincent Chapeau, Teel Technologies Canada.*\n")
+    parts.append(f"*AFAP v2.4.2 — Vincent Chapeau, Teel Technologies Canada.*\n")
 
     out_path = os.path.join(export_dir, 'rapport_forensique.md')
     with open(out_path, 'w', encoding='utf-8') as f:
