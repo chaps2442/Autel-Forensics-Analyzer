@@ -1,4 +1,4 @@
-# cli.py — AFAP v2.4.1 — Mode ligne de commande
+# cli.py — AFAP v2.4.2 — Mode ligne de commande
 # Auteur : Vincent Chapeau — Teel Technologies Canada (vincent.chapeau@teeltechcanada.com)
 #
 # Usage :
@@ -103,7 +103,7 @@ DEFAULT_ORDER = ['vins', 'logs', 'mac', 'user', 'pwd', 'vehref', 'dcim', 'sqlite
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="AFAP v2.4.1 — Autel Forensics Analyzer (CLI mode)",
+        description="AFAP v2.4.2 — Autel Forensics Analyzer (CLI mode)",
         epilog="Exemple : python cli.py --source ./KM100_B --out ./out --lang en")
     p.add_argument('--source', '-s', required=True,
                    help="Source : dossier d'extraction OU archive .zip/.7z")

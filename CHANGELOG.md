@@ -1,5 +1,13 @@
 # Changelog AFAP
 
+## v2.4.2 — Sessions DataLogging du firmware récent : VIN, VCI, fonction
+
+Sur une tablette KM100 (Rockchip, Android 9, 2024-2025), le `*_main.log` des sessions récentes donne `functionName`, `diagPath`, `vin`, `system`, `dtcCount`, `VCIName`/`vciName`, `vciSn` au lieu de `FuncName`/`MenuPath` : ces sessions sortaient sans fonction ni VIN.
+
+- `extract_operations` : les deux agencements sont lus, ainsi que `vin=…` dans une ligne de journal ; nouvelles colonnes `vin`, `systeme`, `nb_dtc`, `vci`, `vci_sn` dans `vehicle_operations.csv` (ajoutées en fin de ligne ; les lecteurs par nom de colonne ne changent pas) ; à horodatage égal, la meilleure copie l'emporte et garde les champs relevés dans les autres (VIN, VCI) ; un dossier `DataLogging/DATA_<id>/` n'est plus pris pour une marque.
+- Rapport : colonnes VIN et VCI dans la section 2bis.
+- Nouveau test `test_v242.py` (données fictives).
+
 ## v2.4.1 — Compte utilisateur sur les tablettes MaxiAP / Rockchip sm2031
 
 Retour terrain : sur une extraction physique de tablette Autel Rockchip sm2031 (Android 9), seuls des VIN ressortaient, pas le compte. Sur cette plateforme le compte n'est pas dans les journaux `User{autelId=...}` :
